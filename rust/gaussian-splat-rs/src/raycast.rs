@@ -220,18 +220,18 @@ fn raycast_ellipsoid(
     let d: [f64; 3] = std::array::from_fn(|i| local_dir[i] / scale[i]);
     let a: f64 = d.iter().map(|v| v * v).sum();
     let b: f64 = o.iter().zip(d).map(|(o, d)| o * d).sum();
-    // Closest-point geometry avoids subtracting two large quadratic terms.
+    // Lagrange's identity avoids subtracting two large quadratic terms.
     // Keep d unnormalized so t stays in world-distance units.
-    let closest_t = -b / a;
-    let distance_squared: f64 = o
-        .iter()
-        .zip(d)
-        .map(|(o, d)| (o + closest_t * d).powi(2))
-        .sum();
-    if distance_squared > 1.0 {
+    let cross = [
+        o[1] * d[2] - o[2] * d[1],
+        o[2] * d[0] - o[0] * d[2],
+        o[0] * d[1] - o[1] * d[0],
+    ];
+    let discriminant = a - cross.iter().map(|v| v * v).sum::<f64>();
+    if discriminant < 0.0 {
         return None;
     }
-    raycast_t_in_range64(closest_t - ((1.0 - distance_squared) / a).sqrt(), near, far)
+    raycast_t_in_range64((-b - discriminant.sqrt()) / a, near, far)
 }
 
 fn quat_vec64(q: [f64; 4], v: [f64; 3]) -> [f64; 3] {
