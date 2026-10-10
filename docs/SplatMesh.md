@@ -46,7 +46,7 @@ For large streamed scenes, use [RadStreamScheduler](RadStreamScheduler.md) or [S
 | `onFrame` | `({ mesh, time, deltaTime }) => void` | `undefined` | Called before each update of the model; use it for animation |
 | `editable` | `boolean` | `true` | Allow [SDF edits](SplatEdit.md) to affect this model |
 | `raycastable` | `boolean` | `true` | Include this model in Three.js raycasting |
-| `minRaycastOpacity` | `number` | `0.15` | Ignore more transparent areas when picking; higher values narrow the area that can be hit |
+| `minRaycastOpacity` | `number` | `0.1` | Ignore more transparent areas when picking; higher values narrow the area that can be hit |
 
 Choose at most one of `url`, `file`, `fileBytes`, or `splats`; combining them throws.
 
