@@ -7,14 +7,18 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-14
+
 ### Added
 
-- Added `NeuralDenoiseNode` for `WebGPURenderer` and `NeuralDenoisePass` for `WebGLRenderer`. They smooth stochastic rendering and help reduce trails behind moving objects, using more GPU time and memory than TAA. See [Neural denoising](docs/NeuralDenoiseNode.md) for setup and requirements.
-- Added two neural denoiser profiles and optional four-sample coverage for less noise during motion, at higher GPU and memory cost.
-- Added neural denoiser, profile and coverage quality controls to the viewer. TAA remains the default.
+- Added experimental `NeuralDenoiseNode` for `WebGPURenderer` and `NeuralDenoisePass` for `WebGLRenderer`. They smooth stochastic rendering and help reduce trails behind moving objects. See [Neural denoising](docs/NeuralDenoiseNode.md) for setup and requirements.
+- Added `"performance"` and `"quality"` neural denoising modes. Quality is the library default; Performance uses less GPU time and memory.
+- Added optional 4× MSAA to TAA and neural denoising for less noise during motion, at higher GPU and memory cost. MSAA is disabled by default.
+- Added denoiser, neural mode, and MSAA controls to the viewer. When stochastic rendering is enabled, the viewer defaults to neural denoising in Performance mode.
 
 ### Changed
 
+- Lowered the default `SplatMesh.minRaycastOpacity` from `0.15` to `0.1`, allowing picking in more transparent areas. Set it to `0.15` to retain the previous threshold.
 - Improved memory reclamation with `shrinkResources()`, including SDF edits.
 - Migrated the library, tests, and Vite configuration from TypeScript to JavaScript, with adjacent TypeScript declarations preserving the public API types.
 - Reworked declaration builds for ESM and CommonJS and added JavaScript syntax checks. Builds no longer depend on `ts-node` or `vite-plugin-dts`.
@@ -576,7 +580,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Initial public release of the Three.js Gaussian Splatting renderer.
 
-[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.1.8...v1.2.0
