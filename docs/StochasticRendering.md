@@ -98,9 +98,9 @@ It has the same options and requirements as `NeuralDenoiseNode` on WebGL2.
 ### With any of these
 
 - Call `reset()` after a camera cut or a scene replacement. With TAA, also call it after an abrupt change to an object: TAA follows camera movement, not moving objects.
-- With on-demand rendering, keep rendering for several frames after the camera, a model, or streamed content changes, and after the Splat renderer's `onDirty` callback, so the noise can settle. The viewer renders 32 with TAA and 128 with the neural denoiser.
+- With on-demand rendering, keep rendering for several frames after the camera, a model, or streamed content changes, and after the Splat renderer's `onDirty` callback, so the noise can settle.
 
-See [TAAPass and TAANode](TAAPass.md) and [Neural denoising](NeuralDenoiseNode.md) for effects, depth, color, and cleanup. The repository's `examples/viewer/viewerTAA.js` supports all three backends.
+See [TAAPass and TAANode](TAAPass.md) and [Neural denoising](NeuralDenoiseNode.md) for effects, depth, color, and cleanup.
 
 ## Control the noise pattern
 

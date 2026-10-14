@@ -24,8 +24,8 @@ export class TAANode extends Node {
   static get type() {
     return "TAANode";
   }
-  /** @param msaa Enable 4× MSAA (default true). Fixed for the node's lifetime. */
-  constructor(scene, camera, msaa = true) {
+  /** @param msaa Enable 4× MSAA (default false). Fixed for the node's lifetime. */
+  constructor(scene, camera, msaa = false) {
     super("vec4");
     this.scene = scene;
     this.camera = camera;

@@ -37,7 +37,7 @@ export declare class TAAPass extends Pass {
   private readonly _resolveMaterial;
   private readonly _copyMaterial;
   private readonly _quad;
-  /** @param msaa Enable 4× MSAA (default true). Fixed for the pass's lifetime. */
+  /** @param msaa Enable 4× MSAA (default false). Fixed for the pass's lifetime. */
   constructor(
     scene: Scene,
     camera: PerspectiveCamera | OrthographicCamera,

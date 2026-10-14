@@ -31,7 +31,7 @@ export declare class TAANode extends Node<"vec4"> {
   private readonly pipelineStates;
   private pipelineRendering;
   private capturePending;
-  /** @param msaa Enable 4× MSAA (default true). Fixed for the node's lifetime. */
+  /** @param msaa Enable 4× MSAA (default false). Fixed for the node's lifetime. */
   constructor(
     scene: Scene,
     camera: PerspectiveCamera | OrthographicCamera,

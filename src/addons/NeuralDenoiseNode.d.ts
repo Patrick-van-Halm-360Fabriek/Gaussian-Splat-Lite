@@ -48,7 +48,7 @@ export declare class NeuralDenoiseNode extends Node<"vec4"> {
   private capturePending;
   /**
    * @param mode Fixed local filtering or learned multiscale quality (default).
-   * @param msaa Enable 4× MSAA (default true).
+   * @param msaa Enable 4× MSAA (default false).
    *   Fixed for the node's lifetime.
    */
   constructor(

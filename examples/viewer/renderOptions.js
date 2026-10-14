@@ -85,7 +85,7 @@ export const renderOptionGroups = [
         label: "MSAA",
         description:
           "Enables 4× MSAA for stochastic rendering with TAA or neural denoising. Reduces noise with higher GPU time and memory use.",
-        defaultValue: true,
+        defaultValue: false,
         falseLabel: "Off",
         trueLabel: "On",
       },

@@ -21,7 +21,7 @@ export function createViewerTAA(
   renderer,
   scene,
   camera,
-  { neural = false, mode = "quality", msaa = true } = {},
+  { neural = false, mode = "quality", msaa = false } = {},
 ) {
   const nodeRenderer = renderer.isWebGPURenderer;
   const taa = neural

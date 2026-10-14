@@ -177,8 +177,8 @@ function makeTarget(name) {
  * output.
  */
 export class TAAPass extends Pass {
-  /** @param msaa Enable 4× MSAA (default true). Fixed for the pass's lifetime. */
-  constructor(scene, camera, msaa = true) {
+  /** @param msaa Enable 4× MSAA (default false). Fixed for the pass's lifetime. */
+  constructor(scene, camera, msaa = false) {
     super();
     this.scene = scene;
     this.camera = camera;

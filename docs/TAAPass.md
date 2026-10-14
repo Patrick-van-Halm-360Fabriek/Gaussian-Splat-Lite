@@ -13,17 +13,17 @@ Both render the scene themselves and need no velocity buffer or other scene setu
 
 ## MSAA
 
-The third constructor argument, `msaa`, enables 4× MSAA with `true` (default) or disables it with `false`:
+The third constructor argument, `msaa`, enables 4× MSAA with `true` or disables it with `false` (default):
 
 ```js
 const taa = new TAANode(scene, camera, true);
 // With WebGLRenderer: new TAAPass(scene, camera, true).
-// Pass false to disable MSAA.
+// MSAA is disabled when the argument is omitted or false.
 ```
 
 Four samples use the same stochastic coverage as the [experimental neural denoiser](NeuralDenoiseNode.md): one scene render into a 4× MSAA target, followed by the usual TAA accumulation. This reduces input noise with higher GPU time and memory use. History targets remain single-sampled, and moving objects are still not tracked.
 
-On WebGL2, including the WebGL fallback, MSAA requires `OES_sample_variables`. Check `renderer.getContext().getExtension("OES_sample_variables")` before constructing TAA; pass `false` when it is unavailable. Unsupported configurations throw an error. The MSAA setting is fixed for the node or pass's lifetime; dispose it and create another to change it. The viewer's **MSAA** switch is on by default for both TAA and neural denoising.
+On WebGL2, including the WebGL fallback, MSAA requires `OES_sample_variables`. Check `renderer.getContext().getExtension("OES_sample_variables")` before enabling MSAA; leave it disabled when the extension is unavailable. Unsupported configurations throw an error. The MSAA setting is fixed for the node or pass's lifetime; dispose it and create another to change it.
 
 ## Before you start
 
@@ -31,7 +31,7 @@ On WebGL2, including the WebGL fallback, MSAA requires `OES_sample_variables`. C
 - **Camera movement only.** Moving objects and changes to individual Splats are not tracked, and may leave a faint trail. Try the [experimental neural denoiser](NeuralDenoiseNode.md) to help reduce these trails.
 - **Stencil follows your renderer.** Create the Three.js renderer with `stencil: true` and stencil masks work as they do without TAA, including the stencil settings on your Splat renderer's `material`.
 - **Reset after a jump.** Call `taa.reset()` after a camera cut or after replacing the scene. Resizing resets automatically.
-- **Keep rendering while the image settles.** With on-demand rendering, render several more frames after each change. The viewer renders 32.
+- **Keep rendering while the image settles.** With on-demand rendering, render several more frames after each change.
 
 ## TAAPass (WebGLRenderer)
 
@@ -63,7 +63,7 @@ renderer.setAnimationLoop(() => {
 // taa.dispose();
 ```
 
-Dispose the passes as well as the composer when you are done. The repository's `examples/viewer/viewerTAA.js` uses this setup.
+Dispose the passes as well as the composer when you are done.
 
 ### Add effects
 
@@ -163,7 +163,7 @@ Both keep colors brighter than white, so effects such as Bloom work as expected.
 | --- | --- | --- |
 | `scene` | Constructor scene | Scene to render; call `reset()` when replacing it |
 | `camera` | Constructor camera | Camera to render with; call `reset()` when replacing it |
-| `msaa` | `true` | Read-only. Whether 4× MSAA is enabled, selected in the constructor |
+| `msaa` | `false` | Read-only. Whether 4× MSAA is enabled, selected in the constructor |
 | `depthTexture` | Read-only | Scene depth of the current frame |
 | `projectionMatrix` | Read-only | Projection that matches `depthTexture` |
 | `depthThreshold` | `0.0005` | Depth change above which a pixel's earlier frames are discarded |

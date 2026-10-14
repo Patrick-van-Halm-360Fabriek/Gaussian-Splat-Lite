@@ -10,7 +10,7 @@ import { NeuralDenoiseNode } from "./NeuralDenoiseNode.js";
 
 /** Experimental neural denoising for WebGLRenderer. Use with EffectComposer and OutputPass. */
 export class NeuralDenoisePass extends Pass {
-  constructor(scene, camera, mode = "quality", msaa = true) {
+  constructor(scene, camera, mode = "quality", msaa = false) {
     super();
     // Capture, camera reprojection and reset are the same as on node renderers.
     this.denoise = new NeuralDenoiseNode(scene, camera, mode, msaa);

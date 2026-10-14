@@ -211,7 +211,7 @@ let renderOnDemand = true;
 let halfFloatBlending = true;
 let denoiser = "neural";
 let denoiserMode = "performance";
-let msaa = true;
+let msaa = false;
 let rendererState = await createRendererState("webgpu");
 let { renderer, controls, splatRenderer, frameGate } = rendererState;
 mountRendererState(rendererState);
