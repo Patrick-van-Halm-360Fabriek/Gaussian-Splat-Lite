@@ -40,6 +40,7 @@ export declare function createTAAState<
   },
   targets: RenderTarget[],
   nodeLogDepth?: boolean,
+  margin?: number,
 ): {
   uniforms: {
     renderSize: Vec2Uniform;

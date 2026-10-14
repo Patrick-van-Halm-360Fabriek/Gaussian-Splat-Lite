@@ -23,7 +23,9 @@ export function createRenderOptionsPanel({ container, groups, onChange }) {
   }
 
   function syncDependencies() {
-    setHidden("minSortIntervalMs", getValue("rendererBackend") === "webgpu");
+    const nativeWebGPU = getValue("rendererBackend") === "webgpu";
+    setHidden("minSortIntervalMs", nativeWebGPU);
+    setHidden("denoiserMode", getValue("denoiser") !== "neural");
   }
 
   function createRow(option) {

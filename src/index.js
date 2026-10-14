@@ -1,6 +1,8 @@
 export { GaussianSplatRenderer } from "./rendering/GaussianSplatRenderer.js";
 export { TAAPass } from "./addons/TAAPass.js";
 export { TAANode } from "./addons/TAANode.js";
+export { NeuralDenoiseNode } from "./addons/NeuralDenoiseNode.js";
+export { NeuralDenoisePass } from "./addons/NeuralDenoisePass.js";
 export { SplatCapture } from "./capture/SplatCapture.js";
 export { SplatLoader } from "./loaders/SplatLoader.js";
 export { RadStreamScheduler } from "./loaders/stream/rad-stream/RadStreamScheduler.js";

@@ -131,7 +131,11 @@ async function createRendererState(backend, previous, onFailure = () => {}) {
       }
     }
     if (state.splatRenderer.stochastic) {
-      state.taa = createViewerTAA(state.renderer, scene, camera);
+      state.taa = createViewerTAA(state.renderer, scene, camera, {
+        neural: denoiser === "neural",
+        mode: denoiserMode,
+        msaa,
+      });
     }
     state.controls = new CameraController(state.renderer, scene, camera, {
       worldUp: camera.up,
@@ -205,6 +209,9 @@ let taa = null;
 let activeStream = null;
 let renderOnDemand = true;
 let halfFloatBlending = true;
+let denoiser = "neural";
+let denoiserMode = "performance";
+let msaa = true;
 let rendererState = await createRendererState("webgpu");
 let { renderer, controls, splatRenderer, frameGate } = rendererState;
 mountRendererState(rendererState);
@@ -298,7 +305,31 @@ const renderOptionActions = {
   splatBudget: (value) => {
     if (activeStream) activeStream.splatBudget = value;
   },
+  denoiser: (value) => {
+    denoiser = value;
+    replaceDenoiser();
+  },
+  denoiserMode: (value) => {
+    denoiserMode = value;
+    replaceDenoiser();
+  },
+  msaa: (value) => {
+    msaa = value;
+    replaceDenoiser();
+  },
 };
+
+// Replaces the active filter; it starts again without history.
+function replaceDenoiser() {
+  if (!taa) return;
+  taa.dispose();
+  taa = createViewerTAA(renderer, scene, camera, {
+    neural: denoiser === "neural",
+    mode: denoiserMode,
+    msaa,
+  });
+  rendererState.taa = taa;
+}
 
 let rendererSwitchToken = 0;
 let rendererSwitchTask = Promise.resolve();
@@ -449,7 +480,11 @@ function applyRenderOption(property, value) {
     splatRenderer[property] = value;
     // Turning stochastic off keeps TAA until drawFrame sees it inactive.
     if (property === "stochastic" && value && !taa) {
-      taa = createViewerTAA(renderer, scene, camera);
+      taa = createViewerTAA(renderer, scene, camera, {
+        neural: denoiser === "neural",
+        mode: denoiserMode,
+        msaa,
+      });
       rendererState.taa = taa;
     }
     splatRenderer.setDirty();

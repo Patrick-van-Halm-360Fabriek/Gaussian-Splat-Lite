@@ -7,16 +7,22 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `NeuralDenoiseNode` for `WebGPURenderer` and `NeuralDenoisePass` for `WebGLRenderer`. They smooth stochastic rendering and help reduce trails behind moving objects, using more GPU time and memory than TAA. See [Neural denoising](docs/NeuralDenoiseNode.md) for setup and requirements.
+- Added two neural denoiser profiles and optional four-sample coverage for less noise during motion, at higher GPU and memory cost.
+- Added neural denoiser, profile and coverage quality controls to the viewer. TAA remains the default.
+
 ### Changed
 
 - Improved memory reclamation with `shrinkResources()`, including SDF edits.
 - Migrated the library, tests, and Vite configuration from TypeScript to JavaScript, with adjacent TypeScript declarations preserving the public API types.
-- Simplified shader type declarations and reorganized native WebGPU rendering code for easier maintenance.
 - Reworked declaration builds for ESM and CommonJS and added JavaScript syntax checks. Builds no longer depend on `ts-node` or `vite-plugin-dts`.
-- Applied Three.js r186 compatibility fixes automatically when using `GaussianSplatRenderer` or `TAANode`. The fixes run once per initialized renderer and require no changes to the installed Three.js source.
+- Applied Three.js r186 compatibility fixes automatically when using `GaussianSplatRenderer`, `TAANode`, or `NeuralDenoiseNode`, with no changes needed to the installed Three.js source.
 
 ### Fixed
 
+- Fixed partly transparent Splats appearing too bright with four-sample neural denoising on `WebGLRenderer`.
 - Restored private declaration boundaries after the JavaScript migration and added checks comparing module value exports with their declarations.
 - Preserved custom material settings when switching between sorted and stochastic rendering.
 - Fixed depth-stencil texture sampling in `TAANode` on native WebGPU with Three.js r186.
@@ -372,7 +378,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Increased the default `SplatMesh.minRaycastOpacity` from `0.1` to `0.15`.
 - Moved built-in Splat color conversion to vertex shaders and trimmed wide-kernel coverage using a conservative alpha bound while preserving the full-support visibility cutoff. Native WebGPU projection quantization can produce slight visual differences, and equal-depth Splats have no guaranteed source order.
 - Unified PLY/SPZ/SOG/RAD decoding around the platform-independent Rust library and shared receiver output, with thin WASM bridges. Reused PLY batches and SPZ decompression buffers, and reduced packed-buffer reads, writes, and temporary allocations.
-- Reorganized source code into data, loaders, runtime, scene, rendering, and utility modules while preserving existing package entry-point exports. Extracted offscreen capture, shared packed-data loading, and separate post-decode building, compilation and execution modules without changing public APIs. Simplified the README and API references, and added architecture and streaming guides.
+- Reorganized source code into data, loaders, runtime, scene, rendering, and utility modules while preserving existing package entry-point exports. Extracted offscreen capture, shared packed-data loading, and separate post-decode building, compilation and execution modules without changing public APIs. Simplified the README and API references, and added streaming guides.
 - Updated the viewer to use reversed depth buffers where supported and allow only one GPU frame in flight while retaining pending redraws and processing camera input. Replaced the bundled Lion model with Multi Material Splats by hybridherbst in SPZ v4 with SH3 data and CC BY 4.0 attribution.
 - Changed `npm run dev` to serve source directly through Vite, consolidated WASM builds into a cross-platform Node script, and split ES module and CommonJS bundle builds. Removed `build:watch` and the platform-specific WASM scripts.
 

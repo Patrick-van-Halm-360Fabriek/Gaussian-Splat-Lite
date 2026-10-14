@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { NodeMaterial } from "three/webgpu";
 import { SPLATS_PER_INSTANCE } from "../SplatGeometry.js";
+import { registerStochasticSplatMaterial } from "../StochasticSplatMaterial.js";
 import { ORDERING_TEXTURE_WIDTH } from "../uniforms.js";
 import { createProjectionProgram } from "./ProjectionProgram.js";
 import {
@@ -11,6 +12,7 @@ import {
   textureBinding,
   uniformBinding,
 } from "./shaderUtils.js";
+import { stochasticCoverage } from "./stochasticCoverage.js";
 import { splatViewUniforms } from "./viewUniforms.js";
 const stochasticHash = N.Fn(([input]) => {
   const value = N.uint(input).toVar();
@@ -21,7 +23,7 @@ const stochasticHash = N.Fn(([input]) => {
   value.bitXorAssign(value.shiftRight(16));
   return value;
 });
-function createSplatFragment(minAlpha, edgeFade, stochasticNoise) {
+function createSplatFragment(minAlpha, edgeFade, stochasticNoise, coverage) {
   // Per-Splat constants share one flat varying: RGB and kernel power as
   // halves, alpha and squared support radius as float32 bits. See packSplatVarying.
   const vSplat = N.varyingProperty("uvec4", "gslSplat");
@@ -64,7 +66,8 @@ function createSplatFragment(minAlpha, edgeFade, stochasticNoise) {
       const randomValue = N.float(load2D(stochasticNoise, coord).r)
         .add(0.5)
         .div(32768);
-      randomValue.greaterThanEqual(alpha).discard();
+      if (coverage) coverage(alpha, randomValue);
+      else randomValue.greaterThanEqual(alpha).discard();
     }
     // Decode color only after the fragment survives coverage tests.
     return N.vec4(
@@ -134,12 +137,12 @@ export function createSplatNodeMaterial({
         splats2: textureBinding(uniforms, "splats2"),
         seeds: stochastic ? textureBinding(uniforms, "stochasticSeeds") : null,
       };
-  const { vSplat, vSplatUv, vStochasticOffset, fragmentNode } =
-    createSplatFragment(
-      minAlpha,
-      edgeFade,
-      stochastic ? textureBinding(uniforms, "stochasticNoise") : null,
-    );
+  const stochasticNoise = stochastic
+    ? textureBinding(uniforms, "stochasticNoise")
+    : null;
+  const fragment = (coverage) =>
+    createSplatFragment(minAlpha, edgeFade, stochasticNoise, coverage);
+  const { vSplat, vSplatUv, vStochasticOffset, fragmentNode } = fragment();
   function buildVertex(builder) {
     const camera = builder.camera;
     const clipPosition = N.vec4(0, 0, 2, 1).toVar();
@@ -233,7 +236,7 @@ export function createSplatNodeMaterial({
     });
     return clipPosition;
   }
-  return Object.assign(new NodeMaterial(), {
+  const material = Object.assign(new NodeMaterial(), {
     uniforms,
     vertexNode: N.Fn(buildVertex)(),
     colorNode: fragmentNode,
@@ -246,4 +249,13 @@ export function createSplatNodeMaterial({
     fog: false,
     toneMapped: false,
   });
+  if (stochastic) {
+    registerStochasticSplatMaterial(material, () =>
+      Object.assign(material.clone(), {
+        uniforms: material.uniforms,
+        colorNode: fragment(stochasticCoverage).fragmentNode,
+      }),
+    );
+  }
+  return material;
 }

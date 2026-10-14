@@ -30,7 +30,7 @@ High performance 3D Gaussian Splatting (3DGS) renderer for **Three.js** with **W
 | --- | --- |
 | **WebGPU / WebGL2** | Use the same Three.js scene API with either renderer |
 | **Large-scene streaming** | Load RAD and SOG detail as the camera moves, with smooth transitions |
-| **Stochastic rendering** | Optional transparency mode, with built-in temporal anti-aliasing to smooth it |
+| **Stochastic rendering** | Optional transparency mode, with built-in temporal anti-aliasing or an experimental neural denoiser to smooth it |
 | **Offscreen capture** | Render Splats to images, cube maps, and environment maps for reflections |
 | **SDF edits** | Recolor or hide parts of a model without moving Splats |
 | **Data and precision** | Load URLs, files, or bytes; place local models in large GIS/ECEF scenes |
@@ -108,7 +108,7 @@ Sorted alpha blending is the default. To enable stochastic rendering:
 splatRenderer.stochastic = true;
 ```
 
-This mode produces visible noise. Smooth it with the library's [temporal anti-aliasing](docs/TAAPass.md): `TAAPass` for `WebGLRenderer`, and `TAANode` for `WebGPURenderer` (including its WebGL2 fallback). See [Stochastic rendering](docs/StochasticRendering.md) for the setup.
+This mode produces visible noise. Smooth it with [temporal anti-aliasing](docs/TAAPass.md), or use the [experimental neural denoiser](docs/NeuralDenoiseNode.md) to help reduce trails behind moving objects. Both support WebGPU and WebGL2. See [Stochastic rendering](docs/StochasticRendering.md) for setup and requirements.
 
 ## Streaming large scenes
 
@@ -161,6 +161,7 @@ const streaming = new SogStreamScheduler({
 - [GaussianSplatRenderer](docs/GaussianSplatRenderer.md) — Rendering options, sorting, and on-demand rendering.
 - [Stochastic rendering](docs/StochasticRendering.md) — The optional transparency mode and how to smooth its noise.
 - [TAAPass and TAANode](docs/TAAPass.md) — Temporal anti-aliasing for WebGLRenderer and WebGPURenderer.
+- [NeuralDenoiseNode and NeuralDenoisePass (Experimental)](docs/NeuralDenoiseNode.md) — Neural denoising on WebGPU and WebGL2, for scenes with moving objects.
 - [SplatCapture](docs/SplatCapture.md) — Offscreen images, pixel readback, cube maps, and environment maps.
 
 **Models**
@@ -189,7 +190,7 @@ npm run dev
 
 Open the URL printed by Vite (normally `http://localhost:8080/`) and drop a `.ply`, `.spz`, `.sog`, or `.rad` file into the viewer, choose a local file, or load one from an HTTP(S) URL. For split SOG, select or drop `meta.json` together with its `.webp` images; for split RAD, include the header and its `.radc` pages. Files are decoded locally. Choose **WebGPU / WebGL2 / WebGPU · WebGL2** in the viewer to compare backends.
 
-See [Contributing](CONTRIBUTING.md#validation) for validation commands, and [Architecture](docs/Architecture.md) for how the library is built internally. `npm run build` emits ESM, CommonJS, declarations, and source maps in `dist/`.
+See [Contributing](CONTRIBUTING.md#validation) for validation commands. `npm run build` emits ESM, CommonJS, declarations, and source maps in `dist/`.
 
 ## Acknowledgements
 
