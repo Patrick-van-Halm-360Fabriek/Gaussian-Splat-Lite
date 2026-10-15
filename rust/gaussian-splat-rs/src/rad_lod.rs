@@ -61,7 +61,8 @@ fn visit_range(bits: &mut [u64], range: Range<usize>) -> Result<()> {
 #[derive(Clone, Copy)]
 struct Candidate {
     index: u32,
-    page: usize,
+    // Reject unaffordable refinements without looking up their tree page.
+    child_count: u32,
     key: i64,
 }
 
@@ -441,7 +442,7 @@ impl RadLodTree {
             let key = bits ^ (((bits >> 63) as u64 >> 1) as i64);
             self.heap.push(Candidate {
                 index: page.base + local as u32,
-                page: page_index,
+                child_count: u32::from(count),
                 key,
             });
         }
@@ -484,23 +485,21 @@ impl RadLodTree {
         let mut remaining = budget - 1;
         let mut budget_pruned = false;
         while let Some(candidate) = self.heap.pop() {
-            let page = &self.pages[candidate.page];
-            let local = (candidate.index - page.base) as usize;
-            let tree = page.tree.as_ref().unwrap();
-            let count = tree.child_count[local] as u32;
+            let count = candidate.child_count;
             if count > remaining + 1 {
-                if !budget_pruned {
-                    // Discard permanently blocked candidates in one pass rather
-                    // than draining the heap. Limit this scan to once per cut.
-                    self.heap.retain(|candidate| {
-                        let page = &self.pages[candidate.page];
-                        let local = (candidate.index - page.base) as usize;
-                        u32::from(page.tree.as_ref().unwrap().child_count[local]) <= remaining + 1
-                    });
+                if !budget_pruned || remaining == 0 {
+                    // Prune near the budget limit and once more when exhausted.
+                    // Unary refinements still fit without consuming another slot.
+                    self.heap
+                        .retain(|candidate| candidate.child_count <= remaining + 1);
                     budget_pruned = true;
                 }
                 continue;
             }
+            let parent_page = self.page_index(candidate.index);
+            let page = &self.pages[parent_page];
+            let local = (candidate.index - page.base) as usize;
+            let tree = page.tree.as_ref().unwrap();
             let start = *tree
                 .child_start
                 .get(local)
@@ -538,7 +537,7 @@ impl RadLodTree {
                     hysteresis,
                 )?;
             }
-            insert(&mut self.pages[candidate.page].next_refined, local);
+            insert(&mut self.pages[parent_page].next_refined, local);
         }
         // Every seen node remains in the cut unless it was successfully refined.
         // Ordered pages and set bits produce stable source order without sorting.

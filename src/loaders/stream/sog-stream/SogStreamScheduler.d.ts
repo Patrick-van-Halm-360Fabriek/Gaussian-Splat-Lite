@@ -1,8 +1,16 @@
 import type * as THREE from "three";
 import type { StreamSchedulerOptions, StreamStats } from "../streamOptions.js";
 import type { SogStreamLoaderOptions } from "./SogStreamLoader.js";
+import type { SogBudgetMode } from "./sogLod.js";
 export type SogStreamSchedulerOptions = SogStreamLoaderOptions &
-  StreamSchedulerOptions;
+  StreamSchedulerOptions & {
+    /** Defaults to "target". "limit" caps detail at the configured distance bands. */
+    splatBudgetMode?: SogBudgetMode;
+    /** Base LOD distance in world units for "limit" mode; defaults to 100. Must be finite and positive. */
+    lodBaseDistance?: number;
+    /** Distance multiplier between LOD levels in both modes; defaults to 2. Must be finite and at least 1. */
+    lodMultiplier?: number;
+  };
 export type SogStreamStats = StreamStats & {
   visibleRegions: number;
 };
@@ -15,6 +23,9 @@ export declare class SogStreamScheduler {
   readonly fadeDurationMs: number;
   readonly maxConcurrentLoads: number;
   private _splatBudget;
+  private _splatBudgetMode;
+  private _lodBaseDistance;
+  private _lodMultiplier;
   private readonly options;
   private readonly loader;
   private readonly abort;
@@ -37,9 +48,18 @@ export declare class SogStreamScheduler {
   private resolveFirst;
   private rejectFirst;
   constructor(options: SogStreamSchedulerOptions);
-  /** Visible-point target, including the environment. Reassign to reselect LODs. */
+  /** Visible-point budget, including the environment. Reassign to reselect LODs. */
   get splatBudget(): number;
   set splatBudget(value: number);
+  /** Fill the budget, or limit detail to the configured distance bands. */
+  get splatBudgetMode(): SogBudgetMode;
+  set splatBudgetMode(value: SogBudgetMode);
+  /** Base LOD distance in world units for limit mode. Higher retains more detail. */
+  get lodBaseDistance(): number;
+  set lodBaseDistance(value: number);
+  /** Distance multiplier between LOD levels; affects both budget modes. */
+  get lodMultiplier(): number;
+  set lodMultiplier(value: number);
   get stats(): SogStreamStats;
   /** Group-local bounds from the index; available after initialized resolves. */
   getBoundingBox(): THREE.Box3;

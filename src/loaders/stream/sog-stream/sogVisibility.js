@@ -98,7 +98,7 @@ export class SogVisibility {
       // A leaf tests each view once for visibility and detail together: the
       // nearest view that sees it decides its detail.
       let seen = false;
-      let weight = 1e-12;
+      let distance = Number.POSITIVE_INFINITY;
       for (const { modelView, frustum, cameraPosition, fovScale } of cameras) {
         if (!frustum.intersectsBox(this.bound)) continue;
         seen = true;
@@ -106,8 +106,10 @@ export class SogVisibility {
           .clampPoint(cameraPosition, this.closest)
           .applyMatrix4(modelView);
         // World-space distance to the box, without weighting by its radius.
-        const distance = Math.max(this.closest.length() * fovScale, 1e-6);
-        weight = Math.max(weight, 1 / distance ** 1.5);
+        distance = Math.min(
+          distance,
+          Math.max(this.closest.length() * fovScale, 1e-6),
+        );
       }
       if (!seen) {
         index = nodes[offset + 6];
@@ -119,15 +121,15 @@ export class SogVisibility {
         leaf = readSogLodLeaf(this.manifest, id);
         this.leaves.set(id, leaf);
       }
-      visible.push({ leaf, weight });
+      visible.push({ leaf, distance });
     }
     return visible;
   }
   /** Transfer only [leaf ID, LOD ordinal] pairs in loading priority order. */
-  select(view, budget) {
-    const visible = this.collect(view);
-    const targets = selectSogLods(visible, budget, this.manifest);
-    visible.sort((a, b) => b.weight - a.weight || a.leaf.id - b.leaf.id);
+  select(request) {
+    const visible = this.collect(request.view);
+    const targets = selectSogLods(visible, this.manifest.lodLevels, request);
+    visible.sort((a, b) => a.distance - b.distance || a.leaf.id - b.leaf.id);
     const result = new Uint32Array(targets.size * 2);
     let offset = 0;
     for (const { leaf } of visible) {

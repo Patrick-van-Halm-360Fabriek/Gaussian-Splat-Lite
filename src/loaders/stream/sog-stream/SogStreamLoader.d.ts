@@ -2,7 +2,7 @@ import type { Splats } from "../../../data/Splats.js";
 import type { StreamRequestOptions } from "../streamOptions.js";
 import type { SogStreamWorker } from "./SogStreamWorker.js";
 import type { SogLodMetadata } from "./sogLod.js";
-import type { SogView } from "./sogVisibility.js";
+import type { SogLodRequest } from "./sogVisibility.js";
 import type { SogChunkInfo } from "./workerHandlers.js";
 export type SogStreamLoaderOptions = StreamRequestOptions & {
   url: string;
@@ -54,7 +54,7 @@ export declare class SogStreamLoader {
   private assertActive;
   initialize(signal?: AbortSignal): Promise<SogLodMetadata>;
   private readIndex;
-  selectLod(view: SogView, budget: number): Promise<Uint32Array>;
+  selectLod(request: SogLodRequest): Promise<Uint32Array>;
   load(
     url: string,
     count: number,

@@ -19,12 +19,45 @@ export const renderOptionGroups = [
         property: "splatBudget",
         label: "Streaming splat budget",
         description:
-          "Target splat count for RAD and SOG streaming. Adjusts detail without reloading.",
+          "Splat budget for RAD and SOG streaming. Adjusts detail without reloading.",
         min: 1_000_000,
         max: 5_000_000,
         step: 100_000,
         defaultValue: 3_000_000,
         format: (value) => `${(value / 1_000_000).toFixed(1)}M`,
+      },
+      {
+        property: "splatBudgetMode",
+        label: "SOG budget mode",
+        description:
+          "Target fills the budget. Limit keeps distant detail coarse even when budget remains.",
+        defaultValue: "target",
+        choices: [
+          ["target", "Target"],
+          ["limit", "Limit"],
+        ],
+      },
+      {
+        property: "lodBaseDistance",
+        label: "SOG base LOD distance",
+        description:
+          "Limit mode only. Higher values retain finer detail farther away. In world units.",
+        min: 1,
+        max: 1000,
+        step: 1,
+        defaultValue: 100,
+        format: (value) => value.toFixed(0),
+      },
+      {
+        property: "lodMultiplier",
+        label: "SOG LOD multiplier",
+        description:
+          "Distance spacing between LOD levels in both Target and Limit modes.",
+        min: 1,
+        max: 4,
+        step: "any",
+        defaultValue: 2,
+        format: (value) => value.toFixed(3),
       },
       {
         property: "renderOnDemand",

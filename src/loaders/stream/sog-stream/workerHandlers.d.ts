@@ -1,6 +1,6 @@
 import type { SplatResult } from "../../../data/defines.js";
 import type { SplatLoadArgs, SplatLoadStatus } from "../../loadTypes.js";
-import type { SogView } from "./sogVisibility.js";
+import type { SogLodRequest } from "./sogVisibility.js";
 export type SogChunkInfo = {
   numSplats: number;
   numSh: number;
@@ -63,11 +63,5 @@ export declare function createSogStreamHandlers(
     counts: Float64Array;
     environment?: string;
   };
-  selectSogLod: ({
-    view,
-    budget,
-  }: {
-    view: SogView;
-    budget: number;
-  }) => Uint32Array<ArrayBufferLike>;
+  selectSogLod: (request: SogLodRequest) => Uint32Array<ArrayBufferLike>;
 };

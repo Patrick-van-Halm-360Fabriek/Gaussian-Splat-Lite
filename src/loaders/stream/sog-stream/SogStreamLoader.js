@@ -106,9 +106,9 @@ export class SogStreamLoader {
       manager.itemEnd(url);
     }
   }
-  async selectLod(view, budget) {
+  async selectLod(request) {
     this.assertActive();
-    return this.lodWorker.call("selectSogLod", { view, budget });
+    return this.lodWorker.call("selectSogLod", request);
   }
   async load(url, count, signal) {
     this.assertActive();

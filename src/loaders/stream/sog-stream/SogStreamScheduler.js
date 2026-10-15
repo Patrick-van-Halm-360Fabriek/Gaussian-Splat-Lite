@@ -47,6 +47,9 @@ export class SogStreamScheduler {
     this.group = options.group ?? new THREE.Group();
     const settings = streamSettings(options);
     this._splatBudget = settings.splatBudget;
+    this.splatBudgetMode = options.splatBudgetMode ?? "target";
+    this.lodBaseDistance = options.lodBaseDistance ?? 100;
+    this.lodMultiplier = options.lodMultiplier ?? 2;
     this.cooldownMs = settings.cooldownMs;
     this.fadeDurationMs = settings.fadeDurationMs;
     this.maxConcurrentLoads = settings.maxConcurrentLoads;
@@ -69,13 +72,46 @@ export class SogStreamScheduler {
     void this.initialized.catch(() => {});
     void this.firstRenderable.catch(() => {});
   }
-  /** Visible-point target, including the environment. Reassign to reselect LODs. */
+  /** Visible-point budget, including the environment. Reassign to reselect LODs. */
   get splatBudget() {
     return this._splatBudget;
   }
   set splatBudget(value) {
     if (value === this._splatBudget) return;
     this._splatBudget = positiveInteger(value, "splatBudget");
+    void this.requestSelection();
+  }
+  /** Fill the budget, or limit detail to the configured distance bands. */
+  get splatBudgetMode() {
+    return this._splatBudgetMode;
+  }
+  set splatBudgetMode(value) {
+    if (value === this.splatBudgetMode) return;
+    if (value !== "target" && value !== "limit")
+      throw new Error('splatBudgetMode must be "target" or "limit"');
+    this._splatBudgetMode = value;
+    void this.requestSelection();
+  }
+  /** Base LOD distance in world units for limit mode. Higher retains more detail. */
+  get lodBaseDistance() {
+    return this._lodBaseDistance;
+  }
+  set lodBaseDistance(value) {
+    if (value === this._lodBaseDistance) return;
+    if (!Number.isFinite(value) || value <= 0)
+      throw new Error("lodBaseDistance must be finite and positive");
+    this._lodBaseDistance = value;
+    void this.requestSelection();
+  }
+  /** Distance multiplier between LOD levels; affects both budget modes. */
+  get lodMultiplier() {
+    return this._lodMultiplier;
+  }
+  set lodMultiplier(value) {
+    if (value === this._lodMultiplier) return;
+    if (!Number.isFinite(value) || value < 1)
+      throw new Error("lodMultiplier must be finite and at least 1");
+    this._lodMultiplier = value;
     void this.requestSelection();
   }
   get stats() {
@@ -243,17 +279,33 @@ export class SogStreamScheduler {
     )
       return;
     const splatBudget = this.splatBudget;
+    const splatBudgetMode = this.splatBudgetMode;
+    const lodBaseDistance = this.lodBaseDistance;
+    const lodMultiplier = this.lodMultiplier;
     const budget = Math.max(
       0,
       splatBudget - Math.max(0, this.environment?.file.count ?? 0),
     );
-    const key = `${getSogViewKey(view)}/${splatBudget}/${budget}`;
+    const key = `${getSogViewKey(view)}/${splatBudget}/${budget}/${splatBudgetMode}/${lodBaseDistance}/${lodMultiplier}`;
     if (key === this.lastRequestedKey) return;
     this.lastRequestedKey = key;
     this.selecting = true;
     try {
-      const selection = await this.loader.selectLod(view, budget);
-      if (this.disposed || !this.shown || splatBudget !== this.splatBudget)
+      const selection = await this.loader.selectLod({
+        view,
+        budget,
+        splatBudgetMode,
+        lodBaseDistance,
+        lodMultiplier,
+      });
+      if (
+        this.disposed ||
+        !this.shown ||
+        splatBudget !== this.splatBudget ||
+        splatBudgetMode !== this.splatBudgetMode ||
+        lodBaseDistance !== this.lodBaseDistance ||
+        lodMultiplier !== this.lodMultiplier
+      )
         return;
       // Keep one completed result; accepting camera lag avoids starving motion.
       // Resolve it against current caches, never worker-time resource snapshots.

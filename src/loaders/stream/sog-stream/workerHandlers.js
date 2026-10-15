@@ -15,23 +15,25 @@ export function createSogStreamHandlers(decodeSplats) {
     const index = packSogLodIndex(
       parseSogLodManifest(JSON.parse(new TextDecoder().decode(bytes)), baseUrl),
     );
-    const { nodes, leafOffsets, lods, upgradeRatios, ...metadata } = index;
-    visibility = new SogVisibility({ nodes, leafOffsets, lods, upgradeRatios });
-    // Keep the tree and ratios here; copy shared arrays before RPC transfers them.
+    const { nodes, leafOffsets, lods, lodLevels, ...metadata } = index;
+    visibility = new SogVisibility({
+      nodes,
+      leafOffsets,
+      lods,
+      lodLevels,
+    });
+    // Keep the tree here; copy shared arrays before RPC transfers them.
     return {
       ...metadata,
       bounds: nodes.slice(0, 6),
       leafOffsets: leafOffsets.slice(),
       lods: lods.slice(),
       retainedIndexBytes:
-        nodes.byteLength +
-        leafOffsets.byteLength +
-        lods.byteLength +
-        upgradeRatios.byteLength,
+        nodes.byteLength + leafOffsets.byteLength + lods.byteLength,
     };
   }
-  function selectSogLod({ view, budget }) {
-    return visibility.select(view, budget);
+  function selectSogLod(request) {
+    return visibility.select(request);
   }
   function cacheSogChunk({ id, data }) {
     // A custom loader may have reordered the whole chunk. Restore file ranges

@@ -9,7 +9,7 @@ export type SogLodRange = {
 };
 export type SogLodLeaf = {
   id: number;
-  /** Coarse to fine, with strictly increasing counts and decreasing levels. */
+  /** Coarse to fine, with strictly decreasing levels. */
   lods: SogLodRange[];
 };
 export type SogLodNode = {
@@ -25,8 +25,7 @@ export type SogLodFile = {
 export type SogLodManifest = {
   tree: SogLodNode;
   leaves: SogLodLeaf[];
-  /** Flattened in leaf/LOD order; each leaf's first entry is unused. */
-  upgradeRatios: number[];
+  lodLevels: number;
   files: SogLodFile[];
   environment?: string;
 };
@@ -38,14 +37,13 @@ export type SogLodIndex = {
   leafOffsets: Uint32Array;
   /** Per level: level, file, offset, count. */
   lods: Float64Array;
-  /** Best reachable distance-error reduction per added splat, in LOD order. */
-  upgradeRatios: Float32Array;
+  lodLevels: number;
   urls: string[];
   counts: Float64Array;
   environment?: string;
 };
 /** Scheduler metadata; the complete spatial tree stays in the LOD worker. */
-export type SogLodMetadata = Omit<SogLodIndex, "nodes" | "upgradeRatios"> & {
+export type SogLodMetadata = Omit<SogLodIndex, "nodes" | "lodLevels"> & {
   /** Root min XYZ and max XYZ. */
   bounds: Float64Array;
 };
@@ -63,7 +61,15 @@ export declare function parseSogLodManifest(
 ): SogLodManifest;
 export type SogVisibleLeaf = {
   leaf: SogLodLeaf;
-  weight: number;
+  /** World-space distance to the region, compensated for the camera's field of view. */
+  distance: number;
+};
+export type SogBudgetMode = "target" | "limit";
+export type SogLodOptions = {
+  budget: number;
+  splatBudgetMode: SogBudgetMode;
+  lodBaseDistance: number;
+  lodMultiplier: number;
 };
 /** Reuse cached refinements up to the target, then split gaps of four or more. */
 export declare function resolveSogLod(
@@ -77,9 +83,9 @@ export declare function resolveSogLod(
   /** Wait until range is attached before requesting the next LOD. */
   refinement?: boolean;
 };
-/** Distance bands within a splat budget, using a small heap. */
+/** Select distance bands, fitting their common base distance to the splat budget. */
 export declare function selectSogLods(
   visible: SogVisibleLeaf[],
-  budget: number,
-  manifest: Pick<SogLodIndex, "leafOffsets" | "upgradeRatios">,
+  lodLevels: number,
+  options: SogLodOptions,
 ): Map<number, SogLodRange>;

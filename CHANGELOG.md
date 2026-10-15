@@ -7,6 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `splatBudgetMode` to `SogStreamScheduler`: `"target"` (the default) adjusts detail to fill the budget, while `"limit"` uses the configured distance bands and only reduces detail when they exceed the budget.
+- Added runtime-adjustable `lodBaseDistance` (default `100`, for `"limit"` mode) and `lodMultiplier` (default `2`, for both modes). Changes take effect without reloading. See [SOG streaming](docs/SogStreamScheduler.md).
+- Added SOG budget mode and LOD distance controls to the viewer.
+
+### Changed
+
+- Streamed SOG now selects detail directly from distance bands. All populated LOD levels remain available, including levels with equal splat counts; missing intermediate levels resolve to the next finer available level.
+- Reduced RAD LOD selection work when the remaining splat budget prevents further refinement.
+
 ## [1.3.0] - 2026-10-14
 
 ### Added

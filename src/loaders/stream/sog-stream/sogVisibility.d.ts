@@ -1,5 +1,5 @@
 import type * as THREE from "three";
-import type { SogLodIndex } from "./sogLod.js";
+import type { SogLodIndex, SogLodOptions } from "./sogLod.js";
 export type SogCamera = {
   modelView: number[];
   projection: number[];
@@ -11,6 +11,7 @@ export type SogView = {
   cameras: SogCamera[];
   shown: boolean;
 };
+export type SogLodRequest = SogLodOptions & { view: SogView };
 /**
  * Capture the cameras that see the group without traversing the manifest or
  * reducing matrix precision. WebXR selects detail from each eye's current pose and frustum.
@@ -31,13 +32,10 @@ export declare class SogVisibility {
   private readonly closest;
   private readonly inverseModelView;
   constructor(
-    manifest: Pick<
-      SogLodIndex,
-      "nodes" | "leafOffsets" | "lods" | "upgradeRatios"
-    >,
+    manifest: Pick<SogLodIndex, "nodes" | "leafOffsets" | "lods" | "lodLevels">,
   );
   private prepareCameras;
   private collect;
   /** Transfer only [leaf ID, LOD ordinal] pairs in loading priority order. */
-  select(view: SogView, budget: number): Uint32Array;
+  select(request: SogLodRequest): Uint32Array;
 }

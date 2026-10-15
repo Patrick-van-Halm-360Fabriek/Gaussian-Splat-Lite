@@ -48,7 +48,10 @@ In WebXR, register `renderer.xr.getCamera()` in place of your camera, as shown f
 | --- | --- | --- |
 | `url` | Required | URL of the scene's `lod-meta.json` |
 | `group` | New `THREE.Group` | Group that holds the scene |
-| `splatBudget` | `3_000_000` | Target number of Splats shown at once, including the environment. Higher values show more detail and use more memory |
+| `splatBudget` | `3_000_000` | Splat budget, including the environment. Higher values allow more detail and use more memory |
+| `splatBudgetMode` | `"target"` | `"target"` adjusts the distance bands to fill the budget. `"limit"` uses the configured distance bands and only reduces detail when they exceed the budget |
+| `lodBaseDistance` | `100` | Base LOD distance in world units for `"limit"` mode, compensated for the camera's field of view. Higher values retain finer detail farther away. Must be finite and positive |
+| `lodMultiplier` | `2` | Distance multiplier between successive LOD levels in both modes. Must be finite and at least `1` |
 | `fadeDurationMs` | `200` | Duration of the fade when the scene first appears and when detail changes; `0` switches instantly |
 | `cooldownMs` | `2000` | How long detail that is no longer shown stays in memory, ready for reuse; `0` releases it at once |
 | `maxConcurrentLoads` | `4` | Maximum number of loads in progress at the same time |
@@ -58,16 +61,15 @@ In WebXR, register `renderer.xr.getCamera()` in place of your camera, as shown f
 | `onError` | Logs to the console | Called when loading fails: `(error, url)` |
 | `loadChunk` | Built-in loader | Load the scene's files yourself: `(url, signal) => Promise<Splats>` |
 
-The budget is a target, not a hard limit: the available detail levels, fades, and the environment can take the scene above it. It limits what is shown, not total memory: detail kept for reuse takes memory too.
-
-Some parts of a scene exist only at finer detail levels. They can be empty from far away and fade in as the camera approaches.
-
 ## Properties and methods
 
 | API | Description |
 | --- | --- |
 | `group` | Group that holds the scene |
 | `splatBudget` | Change it at any time to adjust detail. Must be a positive integer; includes the environment |
+| `splatBudgetMode` | Switch between `"target"` and `"limit"` without reloading |
+| `lodBaseDistance` | Change the base LOD distance in `"limit"` mode without reloading |
+| `lodMultiplier` | Change the distance spacing between LOD levels in both modes without reloading |
 | `initialized` | Resolves when the index is loaded; rejects for invalid input |
 | `firstRenderable` | Resolves when the first data is on screen, or the scene is empty; rejects if the first data cannot be loaded. Keep calling `update()` while you wait |
 | `setCamera(camera)` / `deleteCamera(camera)` | Add or remove a camera that chooses detail. `hasCamera(camera)` and `cameras` report the registered ones |

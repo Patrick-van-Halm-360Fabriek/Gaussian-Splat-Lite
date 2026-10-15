@@ -1,6 +1,5 @@
 import { Box3, Vector3 } from "three";
 export const SOG_LOD_STRIDE = 4;
-const DISTANCE_BAND_MULTIPLIER = 1.5;
 /** Flatten the tree and ranges into transferable typed arrays. */
 export function packSogLodIndex(manifest) {
   const { leaves, files, environment } = manifest;
@@ -37,8 +36,7 @@ export function packSogLodIndex(manifest) {
     nodes,
     leafOffsets,
     lods,
-    // Best reachable distance-error reduction per added splat, in leaf/LOD order.
-    upgradeRatios: Float32Array.from(manifest.upgradeRatios),
+    lodLevels: manifest.lodLevels,
     urls: files.map((file) => file.url),
     counts: Float64Array.from(files, (file) => file.count),
     environment,
@@ -149,16 +147,12 @@ export function parseSogLodManifest(value, baseUrl) {
     return { bound, leaf };
   };
   const tree = parseNode(root.tree);
-  const bandWeights = new Float64Array(levels);
-  for (let level = 1; level < levels; level++)
-    bandWeights[level] = DISTANCE_BAND_MULTIPLIER ** (2 * (level - 1));
-  const distanceErrors = new Float64Array(levels);
-  const upgradeRatios = [];
   for (const leaf of leaves) {
+    // Keep every populated level: distance bands choose detail by level, not cost.
     leaf.lods.sort((a, b) => b.level - a.level);
     const coarsest = leaf.lods[0];
-    // Missing coarser data means this region was decimated away. Price its
-    // first nonempty level as an upgrade instead of forcing it into coverage.
+    // Missing coarser data means this region was decimated away. Its coarser
+    // bands stay empty until the camera reaches its first populated level.
     if (coarsest && coarsest.level < levels - 1) {
       leaf.lods.unshift({
         leaf: leaf.id,
@@ -167,40 +161,6 @@ export function parseSogLodManifest(value, baseUrl) {
         offset: 0,
         count: 0,
       });
-    }
-    // Include every level before pruning, even with equal or inverted counts.
-    let error = 0;
-    for (let i = leaf.lods.length - 1; i >= 0; i--) {
-      const lod = leaf.lods[i];
-      const finer = leaf.lods[i + 1];
-      if (finer)
-        error += Math.max(finer.count - lod.count, 1) * bandWeights[lod.level];
-      distanceErrors[lod.level] = error;
-    }
-    leaf.lods.sort(
-      (a, b) =>
-        a.count - b.count || distanceErrors[a.level] - distanceErrors[b.level],
-    );
-    let bestError = Number.POSITIVE_INFINITY;
-    leaf.lods = leaf.lods.filter((lod) => {
-      if (distanceErrors[lod.level] >= bestError) return false;
-      bestError = distanceErrors[lod.level];
-      return true;
-    });
-    // Include pruned levels' errors when finding the best reachable upgrade ratio.
-    if (leaf.lods.length) upgradeRatios.push(0);
-    for (let i = 1; i < leaf.lods.length; i++) {
-      const coarse = leaf.lods[i - 1];
-      let ratio = 0;
-      for (let j = i; j < leaf.lods.length; j++) {
-        const reach = leaf.lods[j];
-        ratio = Math.max(
-          ratio,
-          (distanceErrors[coarse.level] - distanceErrors[reach.level]) /
-            (reach.count - coarse.count),
-        );
-      }
-      upgradeRatios.push(ratio);
     }
   }
   for (const file of files) {
@@ -226,7 +186,7 @@ export function parseSogLodManifest(value, baseUrl) {
     root.environment == null ? undefined : resolve(root.environment, baseUrl);
   if (environment && files.some((file) => file.url === environment))
     fail("environment must be separate from LOD chunks");
-  return { tree, leaves, upgradeRatios, files, environment };
+  return { tree, leaves, lodLevels: levels, files, environment };
 }
 /** Reuse cached refinements up to the target, then split gaps of four or more. */
 export function resolveSogLod(leaf, target, current, isLoaded) {
@@ -247,31 +207,64 @@ export function resolveSogLod(leaf, target, current, isLoaded) {
   if (range.level - target.level >= 4) {
     const midpoint = Math.floor((range.level + target.level) / 2);
     let nextIndex = index + 1;
-    // Missing or dominated levels advance to the finer side of the midpoint.
+    // Missing levels advance to the finer side of the midpoint.
     while (nextIndex < targetIndex && leaf.lods[nextIndex].level > midpoint)
       nextIndex++;
     load = leaf.lods[nextIndex];
   }
   return { range, load, refinement: true };
 }
-/** Distance bands within a splat budget, using a small heap. */
-export function selectSogLods(visible, budget, manifest) {
-  const { leafOffsets, upgradeRatios } = manifest;
-  let remaining = budget;
+/** Select distance bands, fitting their common base distance to the splat budget. */
+export function selectSogLods(
+  visible,
+  lodLevels,
+  { budget, splatBudgetMode, lodBaseDistance, lodMultiplier },
+) {
+  const limit = splatBudgetMode === "limit";
+  const bandDistances = new Float64Array(lodLevels);
+  for (let level = 1; level < bandDistances.length; level++)
+    bandDistances[level] = lodMultiplier ** (level - 1);
   const selected = new Map();
+  let total = 0;
+  // Limit mode uses the configured bands directly when they fit. Target mode
+  // can use every finest level when the whole visible scene fits.
+  for (const { leaf, distance } of visible) {
+    if (!leaf.lods.length) continue;
+    let index = limit ? 0 : leaf.lods.length - 1;
+    while (
+      index < leaf.lods.length - 1 &&
+      distance < lodBaseDistance * bandDistances[leaf.lods[index].level]
+    )
+      index++;
+    const target = leaf.lods[index];
+    selected.set(leaf.id, target);
+    total += target.count;
+  }
+  if (total <= budget) return selected;
+
+  // Each transition gives the base distance at which a region switches finer.
+  // Visit these distances in order, so all regions share the same band scale.
+  selected.clear();
+  let remaining = budget;
   const heap = [];
   const better = (a, b) =>
-    a.score > b.score || (a.score === b.score && a.leaf.id < b.leaf.id);
-  const push = (item) => {
-    let index = heap.length;
+    a.baseDistance < b.baseDistance ||
+    (a.baseDistance === b.baseDistance && a.leaf.id < b.leaf.id);
+  const enqueue = (leaf, distance, index) => {
+    if (index >= leaf.lods.length) return;
+    // A missing intermediate band resolves to the next finer populated level.
+    const band = bandDistances[leaf.lods[index - 1].level];
+    if (limit && distance >= lodBaseDistance * band) return;
+    const item = { leaf, distance, index, baseDistance: distance / band };
+    let slot = heap.length;
     heap.push(item);
-    while (index > 0) {
-      const parent = (index - 1) >> 1;
+    while (slot > 0) {
+      const parent = (slot - 1) >> 1;
       if (!better(item, heap[parent])) break;
-      heap[index] = heap[parent];
-      index = parent;
+      heap[slot] = heap[parent];
+      slot = parent;
     }
-    heap[index] = item;
+    heap[slot] = item;
   };
   const pop = () => {
     const first = heap[0];
@@ -290,32 +283,32 @@ export function selectSogLods(visible, budget, manifest) {
     }
     return first;
   };
-  const upgrade = (leaf, weight, index, ceiling = Number.POSITIVE_INFINITY) => {
-    if (index >= leaf.lods.length) return;
-    // A later step can have a higher ratio; keep it at the priority that opened it.
-    const score = Math.min(
-      weight * upgradeRatios[leafOffsets[leaf.id] + index],
-      ceiling,
-    );
-    push({ leaf, weight, index, score });
-  };
-  for (const { leaf, weight } of visible) {
+  for (const { leaf, distance } of visible) {
     const coarse = leaf.lods[0];
     if (!coarse) continue;
     selected.set(leaf.id, coarse);
     remaining -= coarse.count;
-    upgrade(leaf, weight, 1);
+    enqueue(leaf, distance, 1);
   }
+  if (remaining <= 0) return selected;
+  const transitions = [];
   while (heap.length) {
-    const { leaf, weight, index, score } = pop();
-    const coarse = leaf.lods[index - 1];
-    const fine = leaf.lods[index];
-    // Stop at the first unaffordable upgrade; skipping it makes unrelated
-    // cheaper regions flicker as the camera moves. Coverage remains the floor.
-    if (fine.count - coarse.count > remaining) break;
-    remaining -= fine.count - coarse.count;
-    selected.set(leaf.id, fine);
-    upgrade(leaf, weight, index + 1, score);
+    const baseDistance = heap[0].baseDistance;
+    transitions.length = 0;
+    let cost = 0;
+    do {
+      const item = pop();
+      const { leaf, distance, index } = item;
+      cost += leaf.lods[index].count - leaf.lods[index - 1].count;
+      transitions.push(item);
+      enqueue(leaf, distance, index + 1);
+    } while (heap.length && heap[0].baseDistance === baseDistance);
+    // Equal-distance transitions move together, including collapsed bands at
+    // multiplier 1. Stop at the first group that cannot fit to avoid flicker.
+    if (cost > remaining) break;
+    remaining -= cost;
+    for (const { leaf, index } of transitions)
+      selected.set(leaf.id, leaf.lods[index]);
   }
   return selected;
 }

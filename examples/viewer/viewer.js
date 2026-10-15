@@ -305,6 +305,19 @@ const renderOptionActions = {
   splatBudget: (value) => {
     if (activeStream) activeStream.splatBudget = value;
   },
+  splatBudgetMode: (value) => {
+    if (activeStream instanceof SogStreamScheduler)
+      activeStream.splatBudgetMode = value;
+    syncStreamOptions();
+  },
+  lodBaseDistance: (value) => {
+    if (activeStream instanceof SogStreamScheduler)
+      activeStream.lodBaseDistance = value;
+  },
+  lodMultiplier: (value) => {
+    if (activeStream instanceof SogStreamScheduler)
+      activeStream.lodMultiplier = value;
+  },
   denoiser: (value) => {
     denoiser = value;
     replaceDenoiser();
@@ -520,10 +533,21 @@ document
   .append(
     document.querySelector("#render-option-stochastic").closest(".option-row"),
   );
-optionsPanel.setHidden("splatBudget", true);
+syncStreamOptions();
 syncRendererOption(getRendererBackend());
 // Keep the initialized backend, including any automatic WebGL fallback.
 optionsPanel.reset({ skip: ["rendererBackend"] });
+
+function syncStreamOptions() {
+  const isSog = activeStream instanceof SogStreamScheduler;
+  optionsPanel.setHidden("splatBudget", !activeStream);
+  optionsPanel.setHidden("splatBudgetMode", !isSog);
+  optionsPanel.setHidden("lodMultiplier", !isSog);
+  optionsPanel.setHidden(
+    "lodBaseDistance",
+    !isSog || activeStream.splatBudgetMode !== "limit",
+  );
+}
 
 function isFileDrag(event) {
   return Array.from(event.dataTransfer?.types ?? []).includes("Files");
@@ -538,7 +562,7 @@ function clearActiveModel() {
   disposeActiveSource = null;
   activeSplat = null;
   activeStream = null;
-  optionsPanel.setHidden("splatBudget", true);
+  syncStreamOptions();
   ui.clearModelInfo();
   requestRender();
 }
@@ -643,6 +667,9 @@ async function initializeModel(
       url,
       manager,
       splatBudget: optionsPanel.getValue("splatBudget"),
+      splatBudgetMode: optionsPanel.getValue("splatBudgetMode"),
+      lodBaseDistance: optionsPanel.getValue("lodBaseDistance"),
+      lodMultiplier: optionsPanel.getValue("lodMultiplier"),
       onChange: requestRender,
       onError: (error, chunkUrl) =>
         console.error("Streaming chunk failed", chunkUrl, error),
@@ -707,7 +734,7 @@ async function loadFile(
     activeSplat = model.splat;
     activeStream = model.stream;
     syncStreamResolution();
-    optionsPanel.setHidden("splatBudget", !activeStream);
+    syncStreamOptions();
     disposeActiveSource = dispose;
     scene.add(activeSplat);
     requestRender();
