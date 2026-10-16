@@ -19,6 +19,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Streamed SOG now selects detail directly from distance bands. All populated LOD levels remain available, including levels with equal splat counts; missing intermediate levels resolve to the next finer available level.
 - Reduced RAD LOD selection work when the remaining splat budget prevents further refinement.
+- RAD detail now uses the same threshold when refining and coarsening.
 - RAD streaming can select the next view while preparing a display update. Selection preparation and indexed Splat center copying also do less work.
 - The viewer now shows current-view loading progress and separate CPU/GPU cache estimates for streamed models.
 

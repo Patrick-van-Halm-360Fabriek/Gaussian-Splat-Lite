@@ -26,7 +26,6 @@ export type RadLodRequest = {
   pageBudget: number;
   pixelThreshold: number;
   residentChunks: number[];
-  hysteresis?: number;
 };
 export type RadLodSelection = {
   /** Stable file indices. The scheduler maps these to occupied GPU slots. */

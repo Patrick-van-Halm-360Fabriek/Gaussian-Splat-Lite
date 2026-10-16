@@ -159,7 +159,6 @@ export function createRadStreamHandlers() {
           Uint32Array.from(request.residentChunks),
           Math.min(request.splatBudget, header.meta.count || 1),
           request.pixelThreshold,
-          request.hysteresis ?? 0.05,
           request.pageBudget,
         ),
       );

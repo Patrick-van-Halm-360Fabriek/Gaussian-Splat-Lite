@@ -26,15 +26,11 @@ struct Page {
     count: u32,
     tree: Option<Tree>,
     seen: Vec<u64>,
+    // Nodes replaced by children during the current traversal.
     refined: Vec<u64>,
-    next_refined: Vec<u64>,
     resident: bool,
     touched: bool,
     wanted: bool,
-}
-
-fn contains(bits: &[u64], index: usize) -> bool {
-    bits[index / 64] & (1_u64 << (index % 64)) != 0
 }
 
 fn insert(bits: &mut [u64], index: usize) {
@@ -241,7 +237,6 @@ impl RadLodTree {
                     tree: None,
                     seen: Vec::new(),
                     refined: Vec::new(),
-                    next_refined: Vec::new(),
                     resident: false,
                     touched: false,
                     wanted: false,
@@ -299,7 +294,6 @@ impl RadLodTree {
         let words = (page.count as usize).div_ceil(64);
         page.seen.resize(words, 0);
         page.refined.resize(words, 0);
-        page.next_refined.resize(words, 0);
         let mut child_count = child_count.to_vec();
         child_count.truncate(
             child_count
@@ -329,9 +323,7 @@ impl RadLodTree {
         {
             page.tree = None;
             page.seen = Vec::new();
-            page.next_refined = Vec::new();
-            // Hysteresis refers to the last cut, even if this page is replaced
-            // before the next decision. Clear it when that decision commits.
+            page.refined = Vec::new();
         }
     }
 
@@ -341,7 +333,6 @@ impl RadLodTree {
         resident_chunks: Uint32Array,
         budget: u32,
         threshold: f64,
-        hysteresis: f64,
         page_budget: u32,
     ) -> Result<JsValue, JsValue> {
         let views = views.to_vec();
@@ -349,8 +340,6 @@ impl RadLodTree {
             || page_budget == 0
             || !threshold.is_finite()
             || threshold <= 0.0
-            || !hysteresis.is_finite()
-            || !(0.0..1.0).contains(&hysteresis)
             || views.is_empty()
             || !views.len().is_multiple_of(VIEW_VALUES)
         {
@@ -366,7 +355,6 @@ impl RadLodTree {
             &resident_chunks.to_vec(),
             budget,
             threshold,
-            hysteresis,
             page_budget,
         )
         .map_err(js_error)?;
@@ -377,13 +365,6 @@ impl RadLodTree {
             ("touchedChunks", &self.touched),
         ] {
             Reflect::set(&result, &key.into(), &Uint32Array::from(values.as_slice()))?;
-        }
-        for page in &mut self.pages {
-            if page.tree.is_some() {
-                std::mem::swap(&mut page.refined, &mut page.next_refined);
-            } else {
-                page.refined = Vec::new();
-            }
         }
         Ok(result.into())
     }
@@ -416,7 +397,6 @@ impl RadLodTree {
         max_children: u32,
         views: &[View],
         threshold: f64,
-        hysteresis: f64,
     ) -> Result<()> {
         let page = &mut self.pages[page_index];
         let start = (indices.start - page.base) as usize;
@@ -430,18 +410,12 @@ impl RadLodTree {
             if count == 0 || u32::from(count) > max_children {
                 continue;
             }
-            let threshold = threshold
-                * if contains(&page.refined, local) {
-                    1.0 - hysteresis
-                } else {
-                    1.0 + hysteresis
-                };
-            let score = projected_size(tree, local, views) / threshold;
-            if score <= 1.0 {
+            let size = projected_size(tree, local, views);
+            if size <= threshold {
                 continue;
             }
             // Cache f64::total_cmp's exact key once instead of at every heap comparison.
-            let bits = score.to_bits() as i64;
+            let bits = size.to_bits() as i64;
             let key = bits ^ (((bits >> 63) as u64 >> 1) as i64);
             self.heap.push(Candidate {
                 index: page.base + local as u32,
@@ -458,7 +432,6 @@ impl RadLodTree {
         resident: &[u32],
         budget: u32,
         threshold: f64,
-        hysteresis: f64,
         page_budget: u32,
     ) -> Result<()> {
         self.heap.clear();
@@ -470,7 +443,7 @@ impl RadLodTree {
             page.touched = false;
             page.wanted = false;
             page.seen.fill(0);
-            page.next_refined.fill(0);
+            page.refined.fill(0);
         }
         for &index in resident {
             if let Some(page) = self.pages.get_mut(index as usize) {
@@ -485,7 +458,7 @@ impl RadLodTree {
             return Ok(());
         }
         self.touch(0);
-        self.enqueue_range(0..1, 0, budget, views, threshold, hysteresis)?;
+        self.enqueue_range(0..1, 0, budget, views, threshold)?;
         let mut remaining = budget - 1;
         let mut budget_pruned = false;
         while let Some(candidate) = self.heap.pop() {
@@ -541,22 +514,15 @@ impl RadLodTree {
             for child_page in first..=last {
                 let page = &self.pages[child_page];
                 let children = start.max(page.base)..(end as u32).min(page.base + page.count);
-                self.enqueue_range(
-                    children,
-                    child_page,
-                    remaining + 1,
-                    views,
-                    threshold,
-                    hysteresis,
-                )?;
+                self.enqueue_range(children, child_page, remaining + 1, views, threshold)?;
             }
-            insert(&mut self.pages[parent_page].next_refined, local);
+            insert(&mut self.pages[parent_page].refined, local);
         }
         // Every seen node remains in the cut unless it was successfully refined.
         // Ordered pages and set bits produce stable source order without sorting.
         self.indices.reserve((budget - remaining) as usize);
         for page in &self.pages {
-            for (word, (&seen, &refined)) in page.seen.iter().zip(&page.next_refined).enumerate() {
+            for (word, (&seen, &refined)) in page.seen.iter().zip(&page.refined).enumerate() {
                 let mut selected = seen & !refined;
                 while selected != 0 {
                     self.indices
