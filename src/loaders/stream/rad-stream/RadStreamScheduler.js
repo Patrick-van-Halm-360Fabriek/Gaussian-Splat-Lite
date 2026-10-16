@@ -5,6 +5,7 @@ import {
   getSplatByteLength,
   getSplatTextureBytes,
 } from "../../../data/splatData.js";
+import { getTextureSize } from "../../../data/textureLayout.js";
 import { RetryTimer } from "../../../runtime/retry.js";
 import { getRadChunkSpan } from "../../rad/radFormat.js";
 import { StreamByteBudget } from "../StreamByteBudget.js";
@@ -55,6 +56,14 @@ export class RadStreamScheduler {
     this.cooldownMs = settings.cooldownMs;
     this.fadeDurationMs = settings.fadeDurationMs;
     this.maxConcurrentLoads = settings.maxConcurrentLoads;
+    this.maxResidentCpuBytes = positiveInteger(
+      options.maxResidentCpuBytes ?? 2 * 1024 * 1024 * 1024,
+      "maxResidentCpuBytes",
+    );
+    this.maxResidentGpuBytes = positiveInteger(
+      options.maxResidentGpuBytes ?? 1024 * 1024 * 1024,
+      "maxResidentGpuBytes",
+    );
     this.loader = new RadStreamLoader(options, this.maxConcurrentLoads);
     this.firstRenderable = new Promise((resolve, reject) => {
       this.resolveFirst = resolve;
@@ -62,7 +71,7 @@ export class RadStreamScheduler {
     });
     this.initialized = this.initialize().catch((error) => {
       this.rejectFirst(error);
-      this.loader.dispose();
+      this.dispose();
       throw error;
     });
     void this.initialized.catch(() => {});
@@ -112,40 +121,57 @@ export class RadStreamScheduler {
   }
   get stats() {
     const loader = this.loader.stats;
-    let pendingBytes = 0;
-    let residentChunks = 0;
-    let loadingChunks = 0;
-    for (const page of this.pages.values()) {
-      if (page.storage?.phase === "resident") residentChunks++;
-      if (page.load?.phase === "decoding") loadingChunks++;
-      pendingBytes += pendingPageBytes(page);
-    }
-    return {
-      visibleSplats: this.shown
-        ? this.pools.reduce((sum, { batch }) => sum + batch.numSplats, 0)
-        : 0,
-      visibleMeshes: this.shown
-        ? this.pools.filter(({ batch }) => batch.numSplats > 0).length
-        : 0,
-      residentChunks,
+    const stats = {
+      visibleSplats: 0,
+      visibleMeshes: 0,
+      residentChunks: 0,
       residentMeshes: this.pools.length,
-      residentBytes:
-        this.pools.reduce(
-          (sum, { batch }) => sum + batch.source.residentBytes,
-          0,
-        ) +
+      residentCpuBytes:
         loader.estimatedCodebookBytes +
         loader.bootstrapBytes +
         loader.cachedBytes +
         loader.selectionBytes +
         (this.displayed?.selection.indices.byteLength ?? 0),
-      pendingBytes: pendingBytes + (this.preparation?.bytes ?? 0),
-      loadingChunks,
+      residentGpuBytes: 0,
+      pendingBytes: this.preparation?.bytes ?? 0,
+      loadingChunks: 0,
+      loadProgress: 0,
       downloadedBytes: loader.downloadedBytes,
       peakWasmMemoryBytes: loader.peakWasmMemoryBytes,
       pageBudget: this.pageBudget,
       lodTimeMs: this.lodTimeMs,
     };
+    for (const { batch } of this.pools) {
+      stats.residentCpuBytes += batch.source.getByteLength();
+      stats.residentGpuBytes += batch.source.textureByteLength;
+      if (this.shown && batch.numSplats > 0) {
+        stats.visibleSplats += batch.numSplats;
+        stats.visibleMeshes++;
+      }
+    }
+    let readyPages = 0;
+    for (const page of this.pages.values()) {
+      if (page.storage?.phase === "resident") {
+        stats.residentChunks++;
+        if (
+          this.wanted.has(page.index) &&
+          this.displayed?.pages.has(page.index)
+        )
+          readyPages++;
+      }
+      if (page.load?.phase === "decoding") stats.loadingChunks++;
+      stats.pendingBytes += pendingPageBytes(page);
+    }
+    if (this.meta) {
+      stats.loadProgress =
+        !this.shown || !this.meta.count
+          ? 1
+          : this.wanted.size
+            ? readyPages / this.wanted.size
+            : Number(!!this.displayed && !this.refinementStopped);
+    }
+    stats.residentBytes = stats.residentCpuBytes + stats.residentGpuBytes;
+    return stats;
   }
   /** Group-local root bounds plus selected Gaussian extents; approximate while streaming. */
   getBoundingBox() {
@@ -183,17 +209,43 @@ export class RadStreamScheduler {
         getRadChunkSpan(meta, index).count,
       );
     // Validate the largest page against the texture layout limits.
-    radPageTextureLayout({
+    const { pageStride } = radPageTextureLayout({
       pageSize: this.pageSize,
       pageCount: 1,
     });
+    const splatBytes = getSplatTextureBytes(1, this.numSh);
+    const boundsBlocks = Math.ceil(this.pageSize / SPLAT_BOUNDS_BLOCK_SIZE);
     const paddedCount = Math.ceil(this.pageSize / 2048) * 2048;
     this.maxPagePendingBytes =
-      getSplatTextureBytes(paddedCount, this.numSh) +
+      paddedCount * splatBytes +
       // Tree data, source IDs, Morton order and bounds awaiting LOD registration.
       this.pageSize * 30 +
-      Math.ceil(this.pageSize / SPLAT_BOUNDS_BLOCK_SIZE) * (48 + 32);
-    this.pageBudget = meta.chunks.length;
+      boundsBlocks * 80;
+    // Reserve GPU storage for packed records, full render indices and opacity tables.
+    const pageGpuBytes =
+      pageStride * (splatBytes + 4) +
+      getTextureSize(pageStride / 4, 1).maxSplats * 16 +
+      16;
+    const pageCpuBytes =
+      pageGpuBytes +
+      pageStride * 8 + // CPU source/visible IDs.
+      this.pageSize * 28 + // Storage map, four worker cuts, displayed/post-fade cuts.
+      boundsBlocks * 72 + // CPU spatial bounds and preparation-worker bounds.
+      2 * (48 + 4); // Current/post-fade bounds and page counts, charged per page.
+    const cpuOverheadBytes = this.loader.residentCpuOverheadBytes;
+    if (this.maxResidentCpuBytes < cpuOverheadBytes + pageCpuBytes)
+      throw new Error(
+        `RAD maxResidentCpuBytes must be at least ${cpuOverheadBytes + pageCpuBytes} bytes for this dataset`,
+      );
+    if (this.maxResidentGpuBytes < pageGpuBytes)
+      throw new Error(
+        `RAD maxResidentGpuBytes must be at least ${pageGpuBytes} bytes for this dataset`,
+      );
+    this.pageBudget = Math.min(
+      meta.chunks.length,
+      Math.floor((this.maxResidentCpuBytes - cpuOverheadBytes) / pageCpuBytes),
+      Math.floor(this.maxResidentGpuBytes / pageGpuBytes),
+    );
     this.wanted.add(0);
     this.pump();
     this.changed();
@@ -282,8 +334,6 @@ export class RadStreamScheduler {
         changed =
           this.applySelection(preparation.result, preparation.pools, now) ||
           changed;
-      // Apply the latest view after publishing or discarding this snapshot.
-      this.revision++;
     }
     // Keep drawing the old cut until its replacement is prepared.
     if (
@@ -314,13 +364,17 @@ export class RadStreamScheduler {
     if (changed) this.changed();
     return changed;
   }
+  get selectionBaselineId() {
+    return this.preparation && !this.preparation.cancelled
+      ? this.preparation.selectionId
+      : (this.displayed?.selection.selectionId ?? 0);
+  }
   async requestSelection() {
     if (
       this.disposed ||
       this.refinementStopped ||
       !this.shown ||
       this.traversal ||
-      this.preparation ||
       !this.meta?.count ||
       !this.views.length ||
       this.lastRequestedRevision === this.revision ||
@@ -330,23 +384,21 @@ export class RadStreamScheduler {
     const residentChunks = [...this.pages.values()]
       .filter((page) => page.storage?.allocation)
       .map((page) => page.index);
-    const traversal = {
-      pages: new Set(residentChunks),
-      previous: this.displayed?.selection,
-      splatBudget: this.splatBudget,
-    };
-    this.traversal = traversal;
+    const previousId = this.selectionBaselineId;
+    const splatBudget = this.splatBudget;
+    this.traversal = new Set(residentChunks);
     this.lastRequestedRevision = this.revision;
-    const { previous, splatBudget } = traversal;
     const started = performance.now();
     let accepted = false;
     try {
       const selection = await this.loader.selectLod({
         views: this.views,
         splatBudget,
+        pageBudget: this.pageBudget,
         pixelThreshold: 1,
         residentChunks,
-        previousId: previous?.selectionId,
+        previousId,
+        displayedId: this.displayed?.selection.selectionId,
         readyId: this.ready?.selection.selectionId,
         fade: this.fadeDurationMs > 0,
       });
@@ -356,12 +408,17 @@ export class RadStreamScheduler {
       // Keep the selected tree path while its reserved pages await writing.
       this.wanted = new Set(selection.wantedChunks);
       for (const index of selection.touchedChunks) this.wanted.add(index);
+      const now = performance.now();
+      for (const index of this.wanted) {
+        const page = this.pages.get(index);
+        if (page) page.lastUsed = now;
+      }
       accepted = true;
       this.cancelUnusedLoads();
       this.pump();
-      // A completed cut may be applied or hidden during traversal. Recompute
-      // against its new fade baseline, but accept camera lag to avoid starvation.
-      if (this.displayed?.selection !== previous || this.preparation) {
+      // Publishing the prepared cut preserves this baseline. Starting or
+      // cancelling preparation changes it and requires a fresh fade decision.
+      if (this.selectionBaselineId !== previousId) {
         this.lastRequestedRevision = -1;
         this.changed();
         return;
@@ -387,12 +444,14 @@ export class RadStreamScheduler {
         this.stopRefinement(error);
       }
     } finally {
-      if (this.traversal === traversal) this.traversal = undefined;
+      this.traversal = undefined;
       // Each accepted decision retires unused caches before the next snapshot,
       // even if the camera kept moving while the worker was selecting.
       if (!this.disposed) {
         const revision = this.revision;
         this.cancelUnusedLoads();
+        // Reuse retired slots before another traversal pins its snapshot.
+        this.reservePages();
         const released = this.releaseUnused(
           performance.now(),
           accepted || !this.shown,
@@ -465,6 +524,7 @@ export class RadStreamScheduler {
       for (const page of this.pages.values())
         if (page.storage?.allocation) pages.add(page.index);
       preparation = {
+        selectionId: selection.selectionId,
         // Same order as the worker's pool snapshots and results.
         pools: Array.from(rangesByPool.keys()),
         pages,
@@ -477,10 +537,14 @@ export class RadStreamScheduler {
           selection.touchedChunks.byteLength +
           selection.wantedChunks.byteLength +
           selectedCount * 8 + // Render indices and post-fade indices.
-          // Opacity tables, current/post-fade page counts and bounds, dirty flags.
+          // Opacity tables, selection bits, page counts, bounds and dirty flags.
           pools.reduce(
             (bytes, pool) =>
-              bytes + pool.opacityBlocks.byteLength + pool.pageCount * 9 + 96,
+              bytes +
+              pool.opacityBlocks.byteLength +
+              pool.opacityBlocks.length / 8 +
+              pool.pageCount * 9 +
+              96,
             0,
           ),
       };
@@ -500,7 +564,6 @@ export class RadStreamScheduler {
   }
   applySelection(prepared, affected, now) {
     const { selection, fade } = prepared;
-    const changed = affected.length > 0;
     let index = 0;
     for (const pool of affected) {
       pool.batch.commitSelection(prepared.pools[index++]);
@@ -508,22 +571,14 @@ export class RadStreamScheduler {
         this.group.add(pool.batch);
       else if (pool.batch.numSplats === 0) pool.batch.removeFromParent();
     }
-    // Unchanged nodes keep the fade baseline valid for an in-flight decision.
-    let displayedSelection = selection;
-    if (this.displayed && !selection.changedChunks.length) {
-      const previous = this.displayed.selection;
-      previous.touchedChunks = selection.touchedChunks;
-      previous.wantedChunks = selection.wantedChunks;
-      displayedSelection = previous;
-    }
     this.displayed = {
-      selection: displayedSelection,
+      selection,
       pages: new Set(selection.touchedChunks),
       transition: fade ? { startedAt: now, pools: affected } : undefined,
     };
     this.cancelUnusedLoads();
     if (selection.indices.length && !fade) this.resolveFirst(this);
-    return changed;
+    return affected.length > 0;
   }
   invalidatePendingSelection() {
     this.ready = undefined;
@@ -538,7 +593,7 @@ export class RadStreamScheduler {
   /** Worker snapshots and waiting cuts pin pages without renewing cooldown. */
   isPagePinned(index) {
     return (
-      this.traversal?.pages.has(index) ||
+      this.traversal?.has(index) ||
       this.ready?.pages.has(index) ||
       this.preparation?.pages.has(index)
     );
@@ -591,6 +646,7 @@ export class RadStreamScheduler {
         count: range.count,
         failures: 0,
         retryAt: 0,
+        lastUsed: performance.now(),
       };
       this.pages.set(index, page);
     }
@@ -646,7 +702,7 @@ export class RadStreamScheduler {
       this.reservePages();
     } catch (error) {
       if (active()) {
-        if (this.loader.lodWorkerLost) return this.stopRefinement(error);
+        if (this.loader.selectionWorkerLost) return this.stopRefinement(error);
         page.retryAt = streamRetryAt(error, page.failures++);
         if (page.index === 0 && page.retryAt === Number.POSITIVE_INFINITY)
           this.rejectFirst(error);
@@ -672,36 +728,49 @@ export class RadStreamScheduler {
       this.bounds.expandByScalar(Math.max(0.001, data.rootRadius ?? 1));
   }
   findSlot() {
+    let capacity = 0;
     for (const pool of this.pools) {
       const slot = pool.slots.indexOf(undefined);
       if (slot !== -1) return { pool, slot };
+      capacity += pool.slots.length;
     }
-    const capacity = this.pools.reduce(
-      (sum, pool) => sum + pool.slots.length,
-      0,
-    );
-    // Each chunk owns at most one slot. An unallocated page therefore leaves
-    // room below pageBudget, which is the dataset's total chunk count.
-    const count = Math.min(8, this.pageBudget - capacity);
-    const batch = new RadStreamBatch({
-      pageSize: this.pageSize,
-      pageCount: count,
-      numSh: this.numSh,
-    });
-    batch.layers.mask = this.group.layers.mask;
-    const pool = {
-      batch,
-      // The scheduler owns slot allocation and retirement.
-      slots: Array(count).fill(undefined),
-    };
-    this.pools.push(pool);
-    return { pool, slot: 0 };
+    if (capacity < this.pageBudget) {
+      // Grow on demand in small pools to bound selection preparation work.
+      const count = Math.min(8, this.pageBudget - capacity);
+      const batch = new RadStreamBatch({
+        pageSize: this.pageSize,
+        pageCount: count,
+        numSh: this.numSh,
+      });
+      batch.layers.mask = this.group.layers.mask;
+      const pool = { batch, slots: Array(count).fill(undefined) };
+      this.pools.push(pool);
+      return { pool, slot: 0 };
+    }
+    let oldest;
+    for (const page of this.pages.values()) {
+      if (
+        !page.storage?.allocation ||
+        this.isPageRequired(page) ||
+        this.isPagePinned(page.index)
+      )
+        continue;
+      if (!oldest || page.lastUsed < oldest.lastUsed) oldest = page;
+    }
+    if (!oldest) return;
+    const allocation = oldest.storage.allocation;
+    // Memory pressure takes precedence over the idle-cache cooldown.
+    this.releasePage(oldest);
+    return allocation;
   }
   reservePages() {
-    for (const page of this.pages.values()) {
-      const storage = page.storage;
+    // Missing pages are ordered by the LOD traversal's refinement priority.
+    for (const index of this.wanted) {
+      const page = this.pages.get(index);
+      const storage = page?.storage;
       if (storage?.phase !== "decoded" || storage.allocation) continue;
       const available = this.findSlot();
+      if (!available) break;
       const { pool, slot } = available;
       pool.slots[slot] = page;
       storage.allocation = available;
@@ -735,17 +804,20 @@ export class RadStreamScheduler {
     this.loader.releaseChunk(page.index);
     this.revision++;
   }
+  isPageRequired(page) {
+    const allocation = page.storage?.allocation;
+    return (
+      page.index === 0 ||
+      this.displayed?.pages.has(page.index) ||
+      this.wanted.has(page.index) ||
+      allocation?.pool.batch.source.isPageSelected(allocation.slot)
+    );
+  }
   releaseUnused(now, allowRelease) {
     let changed = false;
     for (const page of this.pages.values()) {
-      const allocation = page.storage?.allocation;
-      if (!allocation || page.index === 0) continue;
-      const { pool, slot } = allocation;
-      if (
-        this.displayed?.pages.has(page.index) ||
-        this.wanted.has(page.index) ||
-        pool.batch.source.isPageSelected(slot)
-      ) {
+      if (!page.storage?.allocation) continue;
+      if (this.isPageRequired(page)) {
         page.expiresAt = undefined;
         continue;
       }
@@ -760,7 +832,6 @@ export class RadStreamScheduler {
       this.releasePage(page);
       changed = true;
     }
-    // Like streamed SOG, release source storage once its contents retire.
     for (let index = this.pools.length - 1; index >= 0; index--) {
       const pool = this.pools[index];
       if (pool.slots.every((page) => page === undefined)) {

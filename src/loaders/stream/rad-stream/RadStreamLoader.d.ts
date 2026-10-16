@@ -1,7 +1,10 @@
 import type { RadSource, RadSourceOptions } from "../../rad/RadSource.js";
 import type { RadHeader, RadStreamChunk } from "../../rad/radFormat.js";
 import type { RadSelectionRequest } from "./RadSelectionState.js";
-import type { prepareRadSelection } from "./prepareRadSelection.js";
+import type {
+  RadSelectionPreparation,
+  prepareRadSelection,
+} from "./prepareRadSelection.js";
 import type { RadStreamSelection } from "./radFade.js";
 export type RadStreamLoaderOptions = Pick<
   RadSourceOptions,
@@ -13,11 +16,12 @@ export type RadStreamLoaderOptions = Pick<
   | "requestHeader"
   | "withCredentials"
 >;
-/** Dedicated LOD traversal with a separate bounded pool of parallel decoders. */
+/** Separate traversal and display preparation workers, plus bounded page decoders. */
 export declare class RadStreamLoader {
   private readonly options;
   readonly source: RadSource;
   private readonly lodWorker;
+  private readonly preparationWorker;
   private readonly pool;
   private readonly decoderReady;
   private readonly controller;
@@ -29,6 +33,7 @@ export declare class RadStreamLoader {
   private pending;
   private estimatedCodebookBytes;
   private selectionBytes;
+  private preparationBytes;
   constructor(options: RadStreamLoaderOptions, maxConcurrentLoads?: number);
   get stats(): {
     cachedBytes: number;
@@ -38,7 +43,9 @@ export declare class RadStreamLoader {
     bootstrapBytes: number;
     selectionBytes: number;
   };
-  get lodWorkerLost(): boolean;
+  /** Reserve the source cache and codebooks for all decoder workers. */
+  get residentCpuOverheadBytes(): number;
+  get selectionWorkerLost(): boolean;
   private assertActive;
   initialize(signal?: AbortSignal): Promise<RadHeader>;
   loadChunk(
@@ -52,17 +59,7 @@ export declare class RadStreamLoader {
   selectLod(request: RadSelectionRequest): Promise<RadStreamSelection>;
   prepareSelection(
     request: Parameters<typeof prepareRadSelection>[0],
-  ): Promise<{
-    selection: {
-      indices: Uint32Array;
-      wantedChunks: Uint32Array;
-      touchedChunks: Uint32Array;
-      selectionId: number;
-      changedChunks: Uint32Array;
-    };
-    fade: boolean;
-    pools: import("../../../data/RadPagedSplats.js").RadPreparedSelection[];
-  }>;
+  ): Promise<RadSelectionPreparation>;
   releaseChunk(index: number, generation?: number): void;
   dispose(): void;
 }

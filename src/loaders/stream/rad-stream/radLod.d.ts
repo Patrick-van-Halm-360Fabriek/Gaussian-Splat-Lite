@@ -1,5 +1,5 @@
 import type { RadMeta } from "../../rad/radFormat.js";
-/** CPU-only data retained in the dataset worker, never GPU source storage. */
+/** CPU-only page data split between traversal and display preparation workers. */
 export type RadLodChunk = {
   centers: Float32Array;
   radii: Float32Array;
@@ -22,6 +22,8 @@ export type RadLodView = {
 export type RadLodRequest = {
   views: RadLodView[];
   splatBudget: number;
+  /** Combined limit for resident tree paths and requested pages. */
+  pageBudget: number;
   pixelThreshold: number;
   residentChunks: number[];
   hysteresis?: number;

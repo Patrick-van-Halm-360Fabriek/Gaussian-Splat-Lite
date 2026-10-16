@@ -173,6 +173,7 @@ export class IndexedSplats extends Splats {
   getNumSh() {
     return this.numSh;
   }
+  /** Estimated GPU storage for packed records, render indices and opacity tables. */
   get textureByteLength() {
     return (
       this.sourceArrays.reduce((bytes, array) => bytes + array.byteLength, 0) +
@@ -189,9 +190,6 @@ export class IndexedSplats extends Splats {
       this.spatialBoundsBytes +
       this.visibleIndices.byteLength
     );
-  }
-  get residentBytes() {
-    return this.getByteLength() + this.textureByteLength;
   }
   center(source, axis) {
     const second = this.sourceArrays[1];
@@ -210,12 +208,19 @@ export class IndexedSplats extends Splats {
       targetStart + count * 3 > target.length
     )
       throw new Error("Invalid sort center target range");
-    for (let index = 0; index < count; index++)
-      for (let axis = 0; axis < 3; axis++)
-        target[targetStart + index * 3 + axis] = this.center(
-          this.sourceIndices[index],
-          axis,
-        );
+    const centers = this.sourceCenters;
+    const second = this.sourceArrays[1];
+    const indices = this.sourceIndices;
+    for (let index = 0; index < count; index++) {
+      const source = indices[index] * 4;
+      const offset = targetStart + index * 3;
+      const removed =
+        second[source + 1] >>> 16 === 0xfc00 &&
+        second[source + 2] === 0xfc00fc00;
+      target[offset] = removed ? Number.NaN : centers[source];
+      target[offset + 1] = removed ? Number.NaN : centers[source + 1];
+      target[offset + 2] = removed ? Number.NaN : centers[source + 2];
+    }
   }
   releaseSpatialBounds(start) {
     const chunk = this.spatialChunks.get(start);

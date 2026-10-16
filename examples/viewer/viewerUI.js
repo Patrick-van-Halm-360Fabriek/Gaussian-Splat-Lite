@@ -3,6 +3,7 @@ const LOADING_STAGE_RANGES = {
   download: [0, 0.7],
   postDecode: [0.7, 0.8],
   optimize: [0.8, 0.99],
+  stream: [0, 1],
 };
 
 export function createViewerUI({
@@ -186,19 +187,25 @@ export function createViewerUI({
     total = file.size,
     stage = "download",
   ) {
-    if (stage === "download" && loaded === 0) loadingRatio = 0;
     const wasHidden = loadingPanel.hidden;
     loadingBackdrop.hidden = false;
     loadingPanel.hidden = false;
     syncBackgroundInteractivity();
     loadingName.textContent = file.name;
     if (wasHidden) loadingCancelButton.focus();
+    updateLoadingProgress(loaded, total, stage);
+  }
 
+  function updateLoadingProgress(loaded, total, stage) {
+    if (stage === "download" && loaded === 0) loadingRatio = 0;
     if (total > 0 && loaded >= 0) {
       const ratio = Math.min(loaded / total, 1);
       const [start, end] = LOADING_STAGE_RANGES[stage];
-      loadingRatio = Math.max(loadingRatio, start + ratio * (end - start));
-      const percent = Math.round(loadingRatio * 100);
+      loadingRatio =
+        stage === "stream"
+          ? ratio
+          : Math.max(loadingRatio, start + ratio * (end - start));
+      const percent = Math.floor(loadingRatio * 100);
       loadingProgress.setAttribute("aria-valuemin", "0");
       loadingProgress.setAttribute("aria-valuemax", "100");
       loadingProgress.setAttribute("aria-valuenow", String(percent));
@@ -208,7 +215,12 @@ export function createViewerUI({
             ? `File received · ${percent}%`
             : `${percent}% · ${formatBytes(loaded)} of ${formatBytes(total)}`;
       } else {
-        const label = stage === "postDecode" ? "Post-processing" : "Optimizing";
+        const label =
+          stage === "stream"
+            ? "Loading current view"
+            : stage === "postDecode"
+              ? "Post-processing"
+              : "Optimizing";
         loadingDetail.textContent = `${label} · ${percent}%`;
       }
     } else {
@@ -328,18 +340,12 @@ export function createViewerUI({
   updateHeapStat(window.performance.memory);
 
   return {
-    get isLoading() {
-      return !loadingPanel.hidden;
-    },
     showLoading,
     clearLoading,
     showModelInfo,
     clearModelInfo,
     setStatus,
     showToast,
-    setLoadingDetail(message) {
-      loadingDetail.textContent = message;
-    },
     setDropOverlayVisible(visible) {
       dropOverlay.hidden = !visible;
     },
@@ -350,7 +356,14 @@ export function createViewerUI({
       performanceFps.value = fps >= 10 ? Math.round(fps) : fps.toFixed(1);
       updateHeapStat(memory);
       if (streamStats) {
-        fileStats.textContent = `${formatNumber.format(streamStats.visibleSplats)} visible splats · ${formatNumber.format(streamStats.visibleMeshes)} meshes · ${formatBytes(streamStats.residentBytes)} cached · ${streamStats.loadingChunks} loading`;
+        const percent = Math.floor(streamStats.loadProgress * 100);
+        const progress =
+          percent === 100
+            ? "Current view ready"
+            : `Loading current view ${percent}%`;
+        fileStats.textContent = `${formatNumber.format(streamStats.visibleSplats)} visible splats · ${formatNumber.format(streamStats.visibleMeshes)} meshes · ${formatBytes(streamStats.residentCpuBytes)} CPU cached · ${formatBytes(streamStats.residentGpuBytes)} GPU cached · ${progress}`;
+        if (!loadingPanel.hidden)
+          updateLoadingProgress(streamStats.loadProgress, 1, "stream");
       }
     },
     dispose() {

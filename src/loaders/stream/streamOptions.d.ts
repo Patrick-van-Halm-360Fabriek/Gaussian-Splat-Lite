@@ -21,11 +21,17 @@ export type StreamStats = {
   residentMeshes: number;
   /** Decoded chunks, including cached chunks that are not currently drawn. */
   residentChunks: number;
-  /** Retained CPU and estimated GPU bytes, excluding pending copies and WASM. */
+  /** Retained CPU data, excluding pending copies and WASM memory. */
+  residentCpuBytes: number;
+  /** Estimated GPU storage for resident streaming data; excludes renderer buffers. */
+  residentGpuBytes: number;
+  /** Sum of residentCpuBytes and residentGpuBytes. */
   residentBytes: number;
   /** Reserved or ready copies awaiting publication into source storage. */
   pendingBytes: number;
   loadingChunks: number;
+  /** Ready share of the current view's requested detail, from 0 to 1. Changes with the view. */
+  loadProgress: number;
   downloadedBytes: number;
   peakWasmMemoryBytes: number;
 };

@@ -21,6 +21,7 @@ function preparePool(
     0,
   );
   const target = new Uint32Array(count);
+  const selectedWords = new Uint32Array(opacityBlocks.length / 32);
   const selectedPages = new Uint32Array(pageCount);
   const dirtyLayers = new Uint8Array(pageCount);
   // Flags record current (1) and post-fade (2) block membership.
@@ -38,7 +39,6 @@ function preparePool(
         boundingBox: boundingBox.slice(),
       }
     : undefined;
-  let offset = 0;
   let finalCount = 0;
   let fadeKinds = 0;
   for (const {
@@ -57,7 +57,7 @@ function preparePool(
     for (let index = start; index < end; index++) {
       const source = pageStart + order[indices[index] - sourceBase];
       const fade = fades?.[index] ?? 0;
-      target[offset++] = source;
+      selectedWords[source >>> 5] |= 1 << (source & 31);
       const block = Math.floor(source / SPLAT_BOUNDS_BLOCK_SIZE);
       if (!blockFlags[block]) {
         blockFlags[block] = 1;
@@ -90,16 +90,25 @@ function preparePool(
       }
     }
   }
-  // Keep selected records in Morton storage order. Unsorted stochastic draws
-  // traverse it directly; sorted draws reorder these same records.
-  target.sort();
+  // Enumerate selected bits in Morton storage order without sorting the cut.
+  // Unsorted stochastic draws traverse this order directly.
+  let offset = 0;
+  for (let word = 0; word < selectedWords.length && offset < count; word++) {
+    let bits = selectedWords[word];
+    while (bits) {
+      target[offset++] = word * 32 + 31 - Math.clz32(bits & -bits);
+      bits &= bits - 1;
+    }
+  }
   let finalSelection;
   if (final && fadeKinds & 2) {
     // The post-fade cut is a subset of the sorted target; omit outgoing group 3.
     const indices = new Uint32Array(finalCount);
     let offset = 0;
-    for (const source of target)
+    for (let index = 0; index < target.length; index++) {
+      const source = target[index];
       if (opacityBlocks[source] !== 3) indices[offset++] = source;
+    }
     finalSelection = { ...final, indices };
   }
   return {

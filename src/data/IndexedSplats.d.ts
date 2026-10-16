@@ -49,9 +49,9 @@ export declare abstract class IndexedSplats extends Splats {
   getSourceIndex(index: number): number;
   private checkVisibleRange;
   getNumSh(): 0 | 3 | 2 | 1;
-  private get textureByteLength();
+  /** Estimated GPU storage for packed records, render indices and opacity tables. */
+  get textureByteLength(): number;
   getByteLength(): number;
-  get residentBytes(): number;
   private center;
   copySortCenters(
     target: Float32Array,

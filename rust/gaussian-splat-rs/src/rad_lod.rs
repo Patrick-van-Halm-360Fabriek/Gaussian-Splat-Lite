@@ -342,9 +342,11 @@ impl RadLodTree {
         budget: u32,
         threshold: f64,
         hysteresis: f64,
+        page_budget: u32,
     ) -> Result<JsValue, JsValue> {
         let views = views.to_vec();
         if budget == 0
+            || page_budget == 0
             || !threshold.is_finite()
             || threshold <= 0.0
             || !hysteresis.is_finite()
@@ -365,6 +367,7 @@ impl RadLodTree {
             budget,
             threshold,
             hysteresis,
+            page_budget,
         )
         .map_err(js_error)?;
         let result = Object::new();
@@ -456,6 +459,7 @@ impl RadLodTree {
         budget: u32,
         threshold: f64,
         hysteresis: f64,
+        page_budget: u32,
     ) -> Result<()> {
         self.heap.clear();
         self.indices.clear();
@@ -508,6 +512,15 @@ impl RadLodTree {
             ensure!(end <= self.count as u64, "RAD child range is out of bounds");
             let first = self.page_index(start);
             let last = self.page_index((end - 1) as u32);
+            // Claim pages in refinement priority order, including missing pages.
+            // Keeping the parent when its children do not fit produces a complete
+            // coarser cut and lets the scheduler retire lower-priority old pages.
+            let new_pages = (first..=last)
+                .filter(|&index| !self.pages[index].touched && !self.pages[index].wanted)
+                .count();
+            if self.touched.len() + self.wanted.len() + new_pages > page_budget as usize {
+                continue;
+            }
             let mut ready = true;
             for index in first..=last {
                 let page = &mut self.pages[index];

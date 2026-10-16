@@ -636,18 +636,20 @@ async function initializeModel(
     file: url === undefined ? file : undefined,
     resolveFile,
   };
+  const streamOptions = {
+    splatBudget: optionsPanel.getValue("splatBudget"),
+    onChange: requestRender,
+    onError: (error, chunkUrl) => {
+      console.error("Streaming chunk failed", chunkUrl, error);
+      if (loadId !== activeLoad) return;
+      const detail = error instanceof Error ? error.message : String(error);
+      ui.showToast(`Streaming load failed: ${detail}`);
+    },
+  };
   if (fileType === SplatFileType.RAD) {
     model.stream = new RadStreamScheduler({
       ...source,
-      splatBudget: optionsPanel.getValue("splatBudget"),
-      onChange: requestRender,
-      onError: (error, chunkUrl) => {
-        console.error("RAD chunk failed", chunkUrl, error);
-        if (loadId !== activeLoad || !ui.isLoading) return;
-        const detail = error instanceof Error ? error.message : String(error);
-        ui.setLoadingDetail(`${chunkUrl}: ${detail}`);
-        ui.setStatus("Waiting for a RAD page · retry pending");
-      },
+      ...streamOptions,
     });
     model.stream.setCamera(camera);
     try {
@@ -666,13 +668,10 @@ async function initializeModel(
     model.stream = new SogStreamScheduler({
       url,
       manager,
-      splatBudget: optionsPanel.getValue("splatBudget"),
+      ...streamOptions,
       splatBudgetMode: optionsPanel.getValue("splatBudgetMode"),
       lodBaseDistance: optionsPanel.getValue("lodBaseDistance"),
       lodMultiplier: optionsPanel.getValue("lodMultiplier"),
-      onChange: requestRender,
-      onError: (error, chunkUrl) =>
-        console.error("Streaming chunk failed", chunkUrl, error),
     });
     model.stream.setCamera(camera);
     model.splat = model.stream.group;
@@ -738,15 +737,17 @@ async function loadFile(
     disposeActiveSource = dispose;
     scene.add(activeSplat);
     requestRender();
-    if (model.stream instanceof RadStreamScheduler) {
-      // The active stream advances loading until RAD bounds can frame the view.
+    const radStream = model.stream instanceof RadStreamScheduler;
+    // SOG has index bounds; RAD needs its first page before framing the scene.
+    if (!radStream) frameSplat(activeSplat);
+    if (model.stream) {
       await model.stream.firstRenderable;
       if (loadId !== activeLoad) {
         disposeModel();
         return;
       }
+      if (radStream) frameSplat(activeSplat);
     }
-    frameSplat(activeSplat);
     ui.showModelInfo(file, {
       credit,
       numSplats: activeSplat.numSplats,

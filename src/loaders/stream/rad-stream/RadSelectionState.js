@@ -1,19 +1,29 @@
 import { prepareRadFade } from "./radFade.js";
 const EMPTY_INDICES = new Uint32Array(0);
-/** Worker-owned cuts. Requests pin the displayed and waiting cuts; at most
- * those two plus the new result survive. Replies never transfer cached buffers. */
+/** Worker-owned cuts. Requests pin the baseline, displayed and waiting cuts;
+ * at most those three plus the new result survive. Replies copy cached buffers. */
 export class RadSelectionState {
   constructor() {
     this.cuts = new Map();
     this.nextId = 1;
   }
-  prepare(meta, selected, { previousId = 0, readyId = 0, fade = false }) {
+  prepare(
+    meta,
+    selected,
+    { previousId = 0, displayedId = 0, readyId = 0, fade = false },
+  ) {
     const previous = previousId ? this.cuts.get(previousId) : EMPTY_INDICES;
-    if (!previous || (readyId && !this.cuts.has(readyId)))
+    if (
+      !previous ||
+      (displayedId && !this.cuts.has(displayedId)) ||
+      (readyId && !this.cuts.has(readyId))
+    )
       throw new Error("RAD: selection baseline is unavailable");
-    // Pin both cuts: a waiting cut may become displayed while the RPC runs.
+    // The baseline may still be preparing. Keep the displayed cut for cancellation
+    // and the waiting cut for publication while traversal is in flight.
     for (const id of this.cuts.keys()) {
-      if (id !== previousId && id !== readyId) this.cuts.delete(id);
+      if (id !== previousId && id !== displayedId && id !== readyId)
+        this.cuts.delete(id);
     }
     const transition = prepareRadFade(meta, previous, selected.indices, fade);
     let selectionId = previousId;

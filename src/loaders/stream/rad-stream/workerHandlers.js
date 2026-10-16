@@ -6,7 +6,7 @@ import { RadSource } from "../../rad/RadSource.js";
 import { getRadChunkSpan, unpackRadChunk } from "../../rad/radFormat.js";
 import { RadSelectionState } from "./RadSelectionState.js";
 import { prepareRadSelection } from "./prepareRadSelection.js";
-/** Each worker initializes once as either the dataset LOD tree or a page decoder. */
+/** Workers own LOD traversal, display preparation, or a persistent page decoder. */
 export function createRadStreamHandlers() {
   let header;
   let decoder;
@@ -86,7 +86,7 @@ export function createRadStreamHandlers() {
           extra: decoded.extra,
           rootRadius: index === 0 ? radii[0] : undefined,
         };
-        // Bounds blocks belong to the LOD tree, not the packed page data.
+        // Display preparation retains bounds separately from packed page data.
         const boundsBlocks = new Float32Array(
           Math.ceil(data.numSplats / SPLAT_BOUNDS_BLOCK_SIZE) * 12,
         );
@@ -117,13 +117,6 @@ export function createRadStreamHandlers() {
       loads.get(generation)?.abort();
     },
     retainRadChunk({ index, generation, tree }) {
-      const previous = chunks.get(index);
-      if (previous && previous.generation > generation) return;
-      if (
-        tree.boundsBlocks.length !==
-        Math.ceil(tree.radii.length / SPLAT_BOUNDS_BLOCK_SIZE) * 12
-      )
-        throw new Error("Incomplete RAD bounds blocks");
       wasmCall(() =>
         lod.retain_chunk(
           index,
@@ -134,15 +127,20 @@ export function createRadStreamHandlers() {
           tree.childCount,
         ),
       );
+    },
+    retainRadSelectionChunk({ index, generation, chunk }) {
+      const previous = chunks.get(index);
+      if (previous && previous.generation > generation) return chunkBytes;
+      if (
+        chunk.boundsBlocks.length !==
+        Math.ceil(chunk.sourceToStorage.length / SPLAT_BOUNDS_BLOCK_SIZE) * 12
+      )
+        throw new Error("Incomplete RAD bounds blocks");
       const bytes =
-        tree.sourceToStorage.byteLength + tree.boundsBlocks.byteLength;
-      chunks.set(index, {
-        generation,
-        sourceToStorage: tree.sourceToStorage,
-        boundsBlocks: tree.boundsBlocks,
-        bytes,
-      });
+        chunk.sourceToStorage.byteLength + chunk.boundsBlocks.byteLength;
+      chunks.set(index, { ...chunk, generation, bytes });
       chunkBytes += bytes - (previous?.bytes ?? 0);
+      return chunkBytes;
     },
     selectRadLod(request) {
       // 16 model-view values, pixel scale, projection type, 8 X/Y projection values.
@@ -162,14 +160,15 @@ export function createRadStreamHandlers() {
           Math.min(request.splatBudget, header.meta.count || 1),
           request.pixelThreshold,
           request.hysteresis ?? 0.05,
+          request.pageBudget,
         ),
       );
-      const reply = selections.prepare(header.meta, selected, request);
-      reply.retainedBytes += chunkBytes;
-      return reply;
+      return selections.prepare(header.meta, selected, request);
     },
     releaseRadChunk({ index, generation }) {
       wasmCall(() => lod.release_chunk(index, generation));
+    },
+    releaseRadSelectionChunk({ index, generation }) {
       const previous = chunks.get(index);
       if (
         previous &&
@@ -178,6 +177,7 @@ export function createRadStreamHandlers() {
         chunkBytes -= previous.bytes;
         chunks.delete(index);
       }
+      return chunkBytes;
     },
   };
 }

@@ -14,7 +14,6 @@ export declare class SogStreamBatch extends SplatMesh {
     group: THREE.Group,
     onEmpty: () => void,
   );
-  get residentBytes(): number;
   writeRegion(start: number, data: ReorderedSplatResult): void;
   setRegionOpacity(start: number, opacity: number): void;
   releaseRegion(start: number): void;

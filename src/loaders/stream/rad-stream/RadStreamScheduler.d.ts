@@ -3,8 +3,14 @@ import type { StreamResolutionSource } from "../StreamCameras.js";
 import type { StreamSchedulerOptions, StreamStats } from "../streamOptions.js";
 import type { RadStreamLoaderOptions } from "./RadStreamLoader.js";
 export type RadStreamSchedulerOptions = RadStreamLoaderOptions &
-  StreamSchedulerOptions;
+  StreamSchedulerOptions & {
+    /** Retained CPU byte budget, excluding pending copies and WASM. Default: 2 GiB. */
+    maxResidentCpuBytes?: number;
+    /** Estimated GPU byte budget for resident streaming data. Default: 1 GiB. */
+    maxResidentGpuBytes?: number;
+  };
 export type RadStreamStats = StreamStats & {
+  /** Resident page limit derived from the smaller CPU/GPU allowance. */
   pageBudget: number;
   lodTimeMs: number;
 };
@@ -17,6 +23,8 @@ export declare class RadStreamScheduler {
   readonly cooldownMs: number;
   readonly fadeDurationMs: number;
   readonly maxConcurrentLoads: number;
+  readonly maxResidentCpuBytes: number;
+  readonly maxResidentGpuBytes: number;
   private _splatBudget;
   private readonly loader;
   private readonly abort;
@@ -84,6 +92,7 @@ export declare class RadStreamScheduler {
    * detail any of them needs.
    */
   update(): boolean;
+  private get selectionBaselineId();
   private requestSelection;
   private selectionPagesReady;
   private prepareSelection;
@@ -102,6 +111,7 @@ export declare class RadStreamScheduler {
   private reservePages;
   private uploadPages;
   private releasePage;
+  private isPageRequired;
   private releaseUnused;
   /** Map a raycast hit's rendered index back to its stable file index. */
   getGlobalIndex(mesh: THREE.Object3D, renderedIndex: number): number;

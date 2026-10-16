@@ -75,7 +75,7 @@ In WebXR, register `renderer.xr.getCamera()` in place of your camera, as shown f
 | `setCamera(camera)` / `deleteCamera(camera)` | Add or remove a camera that chooses detail. `hasCamera(camera)` and `cameras` report the registered ones |
 | `update()` | Advance detail selection, loading, and fades. Call it before every render; it throws if no camera is registered |
 | `getBoundingBox()` | Box around the scene, in the group's coordinates; available once `initialized` resolves |
-| `stats` | Numbers for monitoring, such as `visibleSplats`, `visibleRegions`, `loadingChunks`, `downloadedBytes`, and `residentBytes`. Memory figures are estimates, not total browser memory |
+| `stats` | Visible Splats, loading progress, and estimated CPU/GPU cache sizes (`residentCpuBytes` / `residentGpuBytes`) |
 | `dispose()` | Stop loading and release the scene. Pending `initialized` and `firstRenderable` promises reject with `AbortError` |
 
 ### On-demand rendering

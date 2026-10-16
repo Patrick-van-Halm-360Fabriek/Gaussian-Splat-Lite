@@ -10,6 +10,8 @@ import { RadStreamScheduler } from "gaussian-splat-lite";
 const streaming = new RadStreamScheduler({
   url: "/models/scene.rad",
   splatBudget: 3_000_000,
+  maxResidentCpuBytes: 2 * 1024 * 1024 * 1024, // 2 GiB
+  maxResidentGpuBytes: 1024 * 1024 * 1024, // 1 GiB
 });
 scene.add(streaming.group);
 streaming.setCamera(camera);
@@ -73,15 +75,19 @@ renderer.setAnimationLoop(() => {
 | `resolveFile` | Relative URLs | Supply the `.radc` pages of a split scene yourself: `(filename, signal) => URL \| Blob \| Uint8Array \| ArrayBuffer`, directly or as a promise |
 | `group` | New `THREE.Group` | Group that holds the scene |
 | `splatBudget` | `3_000_000` | Maximum number of Splats shown at once. Higher values show more detail and use more memory |
+| `maxResidentCpuBytes` | 2 GiB | CPU memory budget for cached data, in bytes. Set a positive integer when creating the scheduler |
+| `maxResidentGpuBytes` | 1 GiB | GPU memory budget for cached data, in bytes. Set a positive integer when creating the scheduler |
 | `fadeDurationMs` | `200` | Duration of the fade when the scene first appears and when detail changes; `0` switches instantly |
-| `cooldownMs` | `2000` | How long detail that is no longer shown stays in memory, ready for reuse; `0` releases it at once |
+| `cooldownMs` | `2000` | How long unused detail stays ready for reuse; it can be released sooner when either memory budget is reached. `0` releases it at once |
 | `maxConcurrentLoads` | `4` | Maximum number of loads in progress at the same time |
 | `manager` | `THREE.DefaultLoadingManager` | Three.js loading manager, including its URL modifiers |
 | `requestHeader` / `withCredentials` | `{}` / `false` | Request settings. Sensitive settings are not sent to other origins |
 | `onChange` | — | Called when the scene needs a redraw |
 | `onError` | Logs to the console | Called when loading fails: `(error, url)` |
 
-Detail that is already on screen stays there while its replacement loads. During a fade, old and new detail overlap, so the scene can briefly exceed `splatBudget`; use `fadeDurationMs: 0` to prevent this. The budget limits what is shown, not total memory: detail kept for reuse takes memory too.
+Detail already on screen stays visible while its replacement loads, if both memory budgets allow. At the limit, the scene may temporarily show less detail. During a fade, old and new detail overlap, so the scene can briefly exceed `splatBudget`; use `fadeDurationMs: 0` to prevent this.
+
+Unused detail is released after `cooldownMs`, including while hidden, and loads again when needed.
 
 ## Properties and methods
 
@@ -97,7 +103,7 @@ Detail that is already on screen stays there while its replacement loads. During
 | `update()` | Advance detail selection, loading, and fades. Call it before every render; it throws if no camera is registered |
 | `getBoundingBox()` | Approximate box around the scene, in the group's coordinates; empty until the first data loads |
 | `getGlobalIndex(mesh, renderedIndex)` | Convert a picking hit into a node index that stays the same for the whole RAD file |
-| `stats` | Numbers for monitoring, such as `visibleSplats`, `loadingChunks`, `downloadedBytes`, and `residentBytes`. Memory figures are estimates, not total browser memory |
+| `stats` | Visible Splats, loading progress, and estimated CPU/GPU cache sizes (`residentCpuBytes` / `residentGpuBytes`) |
 | `dispose()` | Stop loading and release the scene. Pending `initialized` and `firstRenderable` promises reject with `AbortError` |
 
 ### On-demand rendering

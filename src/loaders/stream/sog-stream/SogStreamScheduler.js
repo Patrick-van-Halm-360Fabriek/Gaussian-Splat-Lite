@@ -123,7 +123,7 @@ export class SogStreamScheduler {
       visibleMeshes: 0,
       residentMeshes: 0,
       residentChunks: 0,
-      residentBytes:
+      residentCpuBytes:
         retainedIndexBytes +
         (manifest
           ? manifest.bounds.byteLength +
@@ -131,14 +131,17 @@ export class SogStreamScheduler {
             manifest.lods.byteLength +
             manifest.counts.byteLength
           : 0),
+      residentGpuBytes: 0,
       pendingBytes: 0,
       loadingChunks: 0,
+      loadProgress: manifest ? 1 : 0,
       ...loaderStats,
     };
     for (const { batch, data, controller } of this.activeChunks) {
       if (batch) {
         stats.residentMeshes++;
-        stats.residentBytes += batch.residentBytes;
+        stats.residentCpuBytes += batch.source.getByteLength();
+        stats.residentGpuBytes += batch.source.textureByteLength;
         if (this.shown && batch.numSplats > 0) {
           stats.visibleMeshes++;
           stats.visibleSplats += batch.numSplats;
@@ -146,7 +149,7 @@ export class SogStreamScheduler {
       }
       if (data?.alive) {
         stats.residentChunks++;
-        stats.residentBytes += data.info.byteLength;
+        stats.residentCpuBytes += data.info.byteLength;
       }
       if (controller) stats.loadingChunks++;
     }
@@ -158,6 +161,26 @@ export class SogStreamScheduler {
           stats.visibleRegions++;
       }
     }
+    if (manifest && this.shown) {
+      let targetRegions = this.selection.length / 2;
+      let readyRegions = 0;
+      for (let offset = 0; offset < this.selection.length; offset += 2) {
+        const id = this.selection[offset];
+        const target = this.lodLeaves.get(id).lods[this.selection[offset + 1]];
+        if (this.leaves.get(id)?.current?.range === target) readyRegions++;
+      }
+      if (this.environment && this.environment.file.count !== 0) {
+        targetRegions++;
+        if (this.leaves.get(-1)?.current) readyRegions++;
+      }
+      stats.loadProgress =
+        manifest.lods.length && this.selection === EMPTY_SELECTION
+          ? 0
+          : targetRegions
+            ? readyRegions / targetRegions
+            : 1;
+    }
+    stats.residentBytes = stats.residentCpuBytes + stats.residentGpuBytes;
     return stats;
   }
   /** Group-local bounds from the index; available after initialized resolves. */

@@ -12,11 +12,19 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - Added `splatBudgetMode` to `SogStreamScheduler`: `"target"` (the default) adjusts detail to fill the budget, while `"limit"` uses the configured distance bands and only reduces detail when they exceed the budget.
 - Added runtime-adjustable `lodBaseDistance` (default `100`, for `"limit"` mode) and `lodMultiplier` (default `2`, for both modes). Changes take effect without reloading. See [SOG streaming](docs/SogStreamScheduler.md).
 - Added SOG budget mode and LOD distance controls to the viewer.
+- Added `maxResidentCpuBytes` (default 2 GiB) and `maxResidentGpuBytes` (default 1 GiB) to `RadStreamScheduler`. RAD detail now respects both cache budgets, releasing unused detail early when needed. These limits exclude pending copies, WASM memory, and renderer buffers. See [RAD streaming](docs/RadStreamScheduler.md).
+- Added `residentCpuBytes`, `residentGpuBytes`, and `loadProgress` to RAD and SOG streaming stats. Memory figures estimate retained streaming data; `residentBytes` remains their sum. Loading progress describes the current view and changes as the view changes.
 
 ### Changed
 
 - Streamed SOG now selects detail directly from distance bands. All populated LOD levels remain available, including levels with equal splat counts; missing intermediate levels resolve to the next finer available level.
 - Reduced RAD LOD selection work when the remaining splat budget prevents further refinement.
+- RAD streaming can select the next view while preparing a display update. Selection preparation and indexed Splat center copying also do less work.
+- The viewer now shows current-view loading progress and separate CPU/GPU cache estimates for streamed models.
+
+### Fixed
+
+- The viewer now waits for streamed SOG content to become renderable before dismissing the loading screen, and shows RAD and SOG streaming errors as notifications.
 
 ## [1.3.0] - 2026-10-14
 

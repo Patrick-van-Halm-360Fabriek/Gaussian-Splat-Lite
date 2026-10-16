@@ -12,9 +12,6 @@ export class SogStreamBatch extends SplatMesh {
     this.source = source;
     this.name = "sog-batch";
   }
-  get residentBytes() {
-    return this.source.residentBytes;
-  }
   writeRegion(start, data) {
     const count = data.numSplats;
     // The scheduler assigns disjoint fixed slots; only occupancy changes.
