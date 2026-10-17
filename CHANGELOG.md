@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-17
+
 ### Added
 
 - Added runtime-adjustable `splatBudgetTolerance` to `RadStreamScheduler`. The default `0.1` allows each selection to exceed `splatBudget` by up to 10%; use `0` for a strict selection limit. Fades can temporarily show both old and new detail; also set `fadeDurationMs: 0` to keep transitions within the budget. See [RAD streaming](docs/RadStreamScheduler.md).
@@ -606,7 +608,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Initial public release of the Three.js Gaussian Splatting renderer.
 
-[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.0...v1.2.1
