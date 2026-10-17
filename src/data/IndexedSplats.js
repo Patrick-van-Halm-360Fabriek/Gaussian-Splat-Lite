@@ -18,7 +18,13 @@ function makeTexture(data, width, height, depth) {
 /** Fixed packed storage with one visible-index contract for rendering and CPU reads.
  * Fades affect display only: records returned to picking retain their source opacity. */
 export class IndexedSplats extends Splats {
-  constructor({ capacity, layerSize, numSh, blockBits }) {
+  constructor({
+    capacity,
+    layerSize,
+    numSh,
+    blockBits,
+    packedOpacityGroups = false,
+  }) {
     // RAD and SOG layout helpers supply aligned power-of-two layers.
     if (capacity > 0x1_0000_0000)
       throw new Error("Indexed Splat capacity exceeds 32-bit addressing");
@@ -32,7 +38,12 @@ export class IndexedSplats extends Splats {
     this.layerSize = layerSize;
     this.numSh = numSh;
     this.blockBits = blockBits;
-    this.opacities = new SplatOpacityTable(capacity, layerSize, blockBits);
+    this.opacities = new SplatOpacityTable(
+      capacity,
+      layerSize,
+      blockBits,
+      packedOpacityGroups,
+    );
     this.sourceArrays = Array.from(
       { length: 2 + SH_ARRAY_COUNTS[numSh] },
       () => new Uint32Array(capacity * 4),
@@ -359,6 +370,7 @@ export class IndexedSplats extends Splats {
     uniforms.sourceLayerBits.value = Math.log2(this.layerSize);
     uniforms.sourceLayerMask.value = this.layerSize - 1;
     uniforms.sourceBlockBits.value = this.blockBits;
+    uniforms.sourcePackedGroups.value = this.opacities.packedGroups;
     uniforms.sourceBlocks.value = this.opacities.texture;
     uniforms.sourceOpacities.value = this.opacities.opacityTexture;
     uniforms.sourceIndexed.value = true;

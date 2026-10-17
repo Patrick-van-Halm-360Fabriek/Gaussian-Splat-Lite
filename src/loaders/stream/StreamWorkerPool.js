@@ -43,7 +43,7 @@ export class StreamWorkerPool {
     let loaded = 0;
     try {
       lease = await this.acquire(request.signal);
-      const { worker } = lease;
+      const { worker, retain } = lease;
       cancel = () => {
         if (!worker.disposed) void options.cancel(worker, id).catch(() => {});
       };
@@ -52,7 +52,8 @@ export class StreamWorkerPool {
       // Do not race load() against abort: synchronous decoding keeps its slot
       // until the worker replies. The format also checks before publishing.
       return await load({
-        ...lease,
+        worker,
+        retain,
         id,
         signal: request.signal,
         start: (value) => {
@@ -97,7 +98,6 @@ export class StreamWorkerPool {
         const owner = slot;
         const worker = owner.worker;
         owner.busy = true;
-        let released = false;
         return {
           worker,
           // The retained cache handle releases this reference once on disposal.
@@ -111,8 +111,6 @@ export class StreamWorkerPool {
             };
           },
           release: () => {
-            if (released) return;
-            released = true;
             owner.busy = false;
             this.retire(owner);
             this.wake();

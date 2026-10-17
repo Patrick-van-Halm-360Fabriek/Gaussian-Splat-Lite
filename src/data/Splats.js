@@ -298,6 +298,7 @@ export class Splats {
     uniforms.sourceLayerBits.value = layerBits;
     uniforms.sourceLayerMask.value = 2 ** layerBits - 1;
     uniforms.sourceBlockBits.value = SPLAT_BLOCKS_DISABLED;
+    uniforms.sourcePackedGroups.value = false;
     uniforms.sourceBlocks.value = Splats.emptyTexture;
     uniforms.sourceOpacities.value = Splats.emptyTexture;
     uniforms.sourceIndexed.value = false;

@@ -19,6 +19,7 @@ export type RadStreamLoaderOptions = Pick<
 /** Separate traversal and display preparation workers, plus bounded page decoders. */
 export declare class RadStreamLoader {
   private readonly options;
+  private readonly onRegistrationSettled;
   readonly source: RadSource;
   private readonly lodWorker;
   private readonly preparationWorker;
@@ -31,10 +32,15 @@ export declare class RadStreamLoader {
   private initialRoot?;
   private rootBytes?;
   private pending;
+  readonly pendingRegistrationBytes: number;
   private estimatedCodebookBytes;
   private selectionBytes;
   private preparationBytes;
-  constructor(options: RadStreamLoaderOptions, maxConcurrentLoads?: number);
+  constructor(
+    options: RadStreamLoaderOptions,
+    maxConcurrentLoads: number,
+    onRegistrationSettled: () => void,
+  );
   get stats(): {
     cachedBytes: number;
     downloadedBytes: number;
@@ -51,10 +57,10 @@ export declare class RadStreamLoader {
   loadChunk(
     index: number,
     signal?: AbortSignal,
-    onDecoded?: () => void,
-  ): Promise<RadStreamChunk>;
+  ): Promise<{ data: RadStreamChunk; registration: Promise<void> }>;
   private loadChunkInternal;
   private decode;
+  private registerChunk;
   getChunkUrl(index: number): string;
   selectLod(request: RadSelectionRequest): Promise<RadStreamSelection>;
   prepareSelection(

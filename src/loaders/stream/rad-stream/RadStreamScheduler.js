@@ -8,23 +8,27 @@ import {
 import { getTextureSize } from "../../../data/textureLayout.js";
 import { RetryTimer } from "../../../runtime/retry.js";
 import { getRadChunkSpan } from "../../rad/radFormat.js";
-import { StreamByteBudget } from "../StreamByteBudget.js";
 import { StreamCameras, streamViews } from "../StreamCameras.js";
 import {
   notifyStreamChange,
   notifyStreamError,
   positiveInteger,
-  streamPendingLimit,
   streamRetryAt,
   streamSettings,
 } from "../streamOptions.js";
 import { RadStreamBatch } from "./RadStreamBatch.js";
 import { RadStreamLoader } from "./RadStreamLoader.js";
 import { radChunkIndex } from "./radLod.js";
-function pendingPageBytes(page) {
-  return page.storage?.phase === "decoded"
-    ? getSplatByteLength(page.storage.data)
-    : (page.load?.reservedBytes ?? 0);
+function pendingPageBytes(page, maxPagePendingBytes) {
+  // Registration copies are charged separately once decoding completes.
+  if (page.storage?.phase === "decoded")
+    return getSplatByteLength(page.storage.data);
+  return page.load ? maxPagePendingBytes : 0;
+}
+function budgetTolerance(value) {
+  if (!Number.isFinite(value) || value < 0)
+    throw new Error("splatBudgetTolerance must be finite and nonnegative");
+  return value;
 }
 /** Camera-driven RAD tree cuts with crossfades, on-demand pages and cooldown. */
 export class RadStreamScheduler {
@@ -53,6 +57,9 @@ export class RadStreamScheduler {
     this.group = options.group ?? new THREE.Group();
     const settings = streamSettings(options);
     this._splatBudget = settings.splatBudget;
+    this._splatBudgetTolerance = budgetTolerance(
+      options.splatBudgetTolerance ?? 0.1,
+    );
     this.cooldownMs = settings.cooldownMs;
     this.fadeDurationMs = settings.fadeDurationMs;
     this.maxConcurrentLoads = settings.maxConcurrentLoads;
@@ -64,7 +71,9 @@ export class RadStreamScheduler {
       options.maxResidentGpuBytes ?? 1024 * 1024 * 1024,
       "maxResidentGpuBytes",
     );
-    this.loader = new RadStreamLoader(options, this.maxConcurrentLoads);
+    this.loader = new RadStreamLoader(options, this.maxConcurrentLoads, () => {
+      this.changed();
+    });
     this.firstRenderable = new Promise((resolve, reject) => {
       this.resolveFirst = resolve;
       this.rejectFirst = reject;
@@ -77,13 +86,24 @@ export class RadStreamScheduler {
     void this.initialized.catch(() => {});
     void this.firstRenderable.catch(() => {});
   }
-  /** Selected-node budget. Assigning a new value requests LOD selection. */
+  /** Target selected-node budget. Assigning a new value requests LOD selection. */
   get splatBudget() {
     return this._splatBudget;
   }
   set splatBudget(value) {
     if (value === this._splatBudget) return;
     this._splatBudget = positiveInteger(value, "splatBudget");
+    this.invalidatePendingSelection();
+    this.revision++;
+    void this.requestSelection();
+  }
+  /** Allowed fractional budget overshoot; zero forbids overshoot. */
+  get splatBudgetTolerance() {
+    return this._splatBudgetTolerance;
+  }
+  set splatBudgetTolerance(value) {
+    if (value === this._splatBudgetTolerance) return;
+    this._splatBudgetTolerance = budgetTolerance(value);
     this.invalidatePendingSelection();
     this.revision++;
     void this.requestSelection();
@@ -133,7 +153,8 @@ export class RadStreamScheduler {
         loader.selectionBytes +
         (this.displayed?.selection.indices.byteLength ?? 0),
       residentGpuBytes: 0,
-      pendingBytes: this.preparation?.bytes ?? 0,
+      pendingBytes:
+        this.loader.pendingRegistrationBytes + (this.preparation?.bytes ?? 0),
       loadingChunks: 0,
       loadProgress: 0,
       downloadedBytes: loader.downloadedBytes,
@@ -159,8 +180,8 @@ export class RadStreamScheduler {
         )
           readyPages++;
       }
-      if (page.load?.phase === "decoding") stats.loadingChunks++;
-      stats.pendingBytes += pendingPageBytes(page);
+      if (page.load) stats.loadingChunks++;
+      stats.pendingBytes += pendingPageBytes(page, this.maxPagePendingBytes);
     }
     if (this.meta) {
       stats.loadProgress =
@@ -223,7 +244,7 @@ export class RadStreamScheduler {
       boundsBlocks * 80;
     // Reserve GPU storage for packed records, full render indices and opacity tables.
     const pageGpuBytes =
-      pageStride * (splatBytes + 4) +
+      pageStride * (splatBytes + 0.25) + // Two-bit RAD opacity groups.
       getTextureSize(pageStride / 4, 1).maxSplats * 16 +
       16;
     const pageCpuBytes =
@@ -378,14 +399,16 @@ export class RadStreamScheduler {
       !this.meta?.count ||
       !this.views.length ||
       this.lastRequestedRevision === this.revision ||
-      !this.pages.get(0)?.storage?.allocation
+      !this.pages.get(0)?.storage?.allocation ||
+      this.pages.get(0)?.registration
     )
       return;
     const residentChunks = [...this.pages.values()]
-      .filter((page) => page.storage?.allocation)
+      .filter((page) => page.storage?.allocation && !page.registration)
       .map((page) => page.index);
     const previousId = this.selectionBaselineId;
     const splatBudget = this.splatBudget;
+    const splatBudgetTolerance = this.splatBudgetTolerance;
     this.traversal = new Set(residentChunks);
     this.lastRequestedRevision = this.revision;
     const started = performance.now();
@@ -394,6 +417,7 @@ export class RadStreamScheduler {
       const selection = await this.loader.selectLod({
         views: this.views,
         splatBudget,
+        splatBudgetTolerance,
         pageBudget: this.pageBudget,
         pixelThreshold: 1,
         residentChunks,
@@ -402,7 +426,12 @@ export class RadStreamScheduler {
         readyId: this.ready?.selection.selectionId,
         fade: this.fadeDurationMs > 0,
       });
-      if (this.disposed || !this.shown || splatBudget !== this.splatBudget)
+      if (
+        this.disposed ||
+        !this.shown ||
+        splatBudget !== this.splatBudget ||
+        splatBudgetTolerance !== this.splatBudgetTolerance
+      )
         return;
       this.lodTimeMs = performance.now() - started;
       // Keep the selected tree path while its reserved pages await writing.
@@ -440,9 +469,7 @@ export class RadStreamScheduler {
       }
       this.changed();
     } catch (error) {
-      if (!this.disposed) {
-        this.stopRefinement(error);
-      }
+      this.stopRefinement(error);
     } finally {
       this.traversal = undefined;
       // Each accepted decision retires unused caches before the next snapshot,
@@ -542,7 +569,7 @@ export class RadStreamScheduler {
             (bytes, pool) =>
               bytes +
               pool.opacityBlocks.byteLength +
-              pool.opacityBlocks.length / 8 +
+              pool.opacityBlocks.length * 2 + // One selection bit per source.
               pool.pageCount * 9 +
               96,
             0,
@@ -605,7 +632,7 @@ export class RadStreamScheduler {
         !this.isPagePinned(page.index) &&
         page.index !== 0
       ) {
-        page.load?.controller.abort();
+        page.load?.abort();
         if (page.storage?.phase === "decoded") this.releasePage(page);
       }
     }
@@ -655,54 +682,54 @@ export class RadStreamScheduler {
   pump() {
     if (this.disposed || this.refinementStopped || !this.meta) return;
     let loading = 0;
-    let pendingBytes = 0;
-    for (const page of this.pages.values()) {
-      if (page.load?.phase === "decoding") loading++;
-      pendingBytes += pendingPageBytes(page);
-    }
-    const pending = new StreamByteBudget(
-      streamPendingLimit(this.maxConcurrentLoads, this.maxPagePendingBytes),
-      pendingBytes,
-    );
+    for (const page of this.pages.values()) if (page.load) loading++;
     const now = performance.now();
     for (const index of this.wanted) {
       const page = this.page(index);
       if (page.storage || page.load || now < page.retryAt) continue;
-      if (
-        loading >= this.maxConcurrentLoads ||
-        !pending.reserve(this.maxPagePendingBytes)
-      )
-        break;
-      const load = {
-        controller: new AbortController(),
-        phase: "decoding",
-        // Kept until tree registration settles, including after cancellation.
-        reservedBytes: this.maxPagePendingBytes,
-      };
+      if (loading >= this.maxConcurrentLoads) break;
+      const load = new AbortController();
       page.load = load;
       loading++;
       void this.loadPage(page, load);
     }
   }
   async loadPage(page, load) {
-    const { signal } = load.controller;
+    const { signal } = load;
+    let registration;
     const active = () =>
-      !this.disposed && !signal.aborted && page.load === load;
+      !this.disposed &&
+      !this.refinementStopped &&
+      !signal.aborted &&
+      (page.load === load ||
+        (registration && page.registration === registration));
     try {
-      const data = await this.loader.loadChunk(page.index, signal, () => {
-        if (!active()) return;
-        load.phase = "registering";
-        this.pump();
-      });
-      if (!active()) return;
+      let result = await this.loader.loadChunk(page.index, signal);
+      if (!active()) {
+        this.loader.releaseChunk(page.index);
+        return;
+      }
+      registration = result.registration;
+      page.registration = registration;
       // Decoded buffers stay owned here until written to the reserved slot.
-      page.storage = { phase: "decoded", data };
-      page.failures = 0;
-      if (page.index === 0) this.setInitialBounds(data);
+      page.storage = { phase: "decoded", data: result.data };
+      if (page.index === 0) this.setInitialBounds(result.data);
+      // Uploads can release these buffers while registration is still pending.
+      result = undefined;
       this.reservePages();
+      // Registration must not occupy a decoder slot or delay page uploads.
+      page.load = undefined;
+      this.pump();
+      this.changed();
+      await registration;
+      if (!active()) return;
+      page.registration = undefined;
+      page.failures = 0;
+      this.revision++;
     } catch (error) {
       if (active()) {
         if (this.loader.selectionWorkerLost) return this.stopRefinement(error);
+        if (registration) this.releasePage(page);
         page.retryAt = streamRetryAt(error, page.failures++);
         if (page.index === 0 && page.retryAt === Number.POSITIVE_INFINITY)
           this.rejectFirst(error);
@@ -774,7 +801,7 @@ export class RadStreamScheduler {
       const { pool, slot } = available;
       pool.slots[slot] = page;
       storage.allocation = available;
-      this.revision++;
+      if (!page.registration) this.revision++;
     }
   }
   uploadPages() {
@@ -800,6 +827,7 @@ export class RadStreamScheduler {
       pool.slots[slot] = undefined;
     }
     page.storage = undefined;
+    page.registration = undefined;
     page.expiresAt = undefined;
     this.loader.releaseChunk(page.index);
     this.revision++;
@@ -855,12 +883,13 @@ export class RadStreamScheduler {
     notifyStreamError(this.options, error, this.loader.getChunkUrl(index));
   }
   stopRefinement(error) {
+    if (this.disposed || this.refinementStopped) return;
     this.refinementStopped = true;
     this.ready = undefined;
     this.preparation = undefined;
     this.wanted.clear();
     this.retryTimer.dispose();
-    for (const page of this.pages.values()) page.load?.controller.abort(error);
+    for (const page of this.pages.values()) page.load?.abort(error);
     this.loader.dispose();
     for (const page of this.pages.values())
       if (page.storage?.phase === "decoded") this.releasePage(page);
@@ -884,7 +913,7 @@ export class RadStreamScheduler {
     const reason = new DOMException("RAD scheduler disposed", "AbortError");
     this.abort.abort(reason);
     this.rejectFirst(reason);
-    for (const page of this.pages.values()) page.load?.controller.abort(reason);
+    for (const page of this.pages.values()) page.load?.abort(reason);
     this.loader.dispose();
     this.preparation = undefined;
     for (const { batch } of this.pools) batch.dispose();

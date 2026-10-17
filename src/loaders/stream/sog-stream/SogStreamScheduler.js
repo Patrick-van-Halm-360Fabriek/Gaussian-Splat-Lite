@@ -6,13 +6,11 @@ import {
   getSplatTextureBytes,
 } from "../../../data/splatData.js";
 import { RetryTimer } from "../../../runtime/retry.js";
-import { StreamByteBudget } from "../StreamByteBudget.js";
 import { StreamCameras } from "../StreamCameras.js";
 import {
   notifyStreamChange,
   notifyStreamError,
   positiveInteger,
-  streamPendingLimit,
   streamRetryAt,
   streamSettings,
 } from "../streamOptions.js";
@@ -487,15 +485,6 @@ export class SogStreamScheduler {
     return changed;
   }
   queueExtractions(selected, now) {
-    // Bound both in-flight and ready copies by their compact packed byte size.
-    // One indivisible oversized region may occupy the queue on its own.
-    let pendingBytes = 0;
-    for (const leaf of this.leaves.values())
-      pendingBytes += leaf.pending?.bytes ?? 0;
-    const budget = new StreamByteBudget(
-      streamPendingLimit(this.maxConcurrentLoads),
-      pendingBytes,
-    );
     const batches = new Map();
     for (const leaf of selected) {
       const range = leaf.target;
@@ -505,7 +494,6 @@ export class SogStreamScheduler {
       if (!source?.alive || now < chunk.retryAt) continue;
       const bytes =
         getSplatTextureBytes(range.count, source.info.numSh) + range.count * 4;
-      if (!budget.reserve(bytes)) continue;
       const pending = { range, chunk, bytes };
       leaf.pending = pending;
       const batch = batches.get(chunk) ?? { source, regions: [] };

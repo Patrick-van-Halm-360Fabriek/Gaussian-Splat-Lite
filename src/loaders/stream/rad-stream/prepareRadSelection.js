@@ -21,12 +21,13 @@ function preparePool(
     0,
   );
   const target = new Uint32Array(count);
-  const selectedWords = new Uint32Array(opacityBlocks.length / 32);
+  // Each opacity word stores sixteen groups, while a selection word holds 32 bits.
+  const selectedWords = new Uint32Array(opacityBlocks.length / 2);
   const selectedPages = new Uint32Array(pageCount);
   const dirtyLayers = new Uint8Array(pageCount);
   // Flags record current (1) and post-fade (2) block membership.
   const blockFlags = new Uint8Array(
-    opacityBlocks.length / SPLAT_BOUNDS_BLOCK_SIZE,
+    (opacityBlocks.length * 16) / SPLAT_BOUNDS_BLOCK_SIZE,
   );
   const centerOnlyBoundingBox = new Float32Array(6);
   const boundingBox = new Float32Array(6);
@@ -64,8 +65,11 @@ function preparePool(
         selectedBlocks.push(block);
       }
       fadeKinds |= fade;
-      if (opacityBlocks[source] !== fade + 1) {
-        opacityBlocks[source] = fade + 1;
+      const word = source >>> 4;
+      const shift = (source & 15) * 2;
+      if (((opacityBlocks[word] >>> shift) & 3) !== fade + 1) {
+        opacityBlocks[word] =
+          (opacityBlocks[word] & ~(3 << shift)) | ((fade + 1) << shift);
         dirtyLayers[slot] = 1;
       }
       if (final && fade !== 2) {
@@ -107,7 +111,8 @@ function preparePool(
     let offset = 0;
     for (let index = 0; index < target.length; index++) {
       const source = target[index];
-      if (opacityBlocks[source] !== 3) indices[offset++] = source;
+      const group = (opacityBlocks[source >>> 4] >>> ((source & 15) * 2)) & 3;
+      if (group !== 3) indices[offset++] = source;
     }
     finalSelection = { ...final, indices };
   }

@@ -4,13 +4,10 @@ type StreamWorker = {
   peakWasmMemoryBytes: number;
   dispose(reason?: unknown): void;
 };
-type WorkerLease<W> = {
+type LoadTask<W> = {
   worker: W;
   /** The retained cache handle releases this reference once on disposal. */
   retain: () => () => void;
-  release: () => void;
-};
-type LoadTask<W> = WorkerLease<W> & {
   id: number;
   signal: AbortSignal;
   start: (url: string) => void;

@@ -10,6 +10,7 @@ import { RadStreamScheduler } from "gaussian-splat-lite";
 const streaming = new RadStreamScheduler({
   url: "/models/scene.rad",
   splatBudget: 3_000_000,
+  splatBudgetTolerance: 0.1, // Allow up to 10% extra Splats; 0 forbids overshoot.
   maxResidentCpuBytes: 2 * 1024 * 1024 * 1024, // 2 GiB
   maxResidentGpuBytes: 1024 * 1024 * 1024, // 1 GiB
 });
@@ -74,18 +75,19 @@ renderer.setAnimationLoop(() => {
 | `url` / `file` / `fileBytes` | Exactly one required | URL, `Blob`/`File`, or complete `Uint8Array`/`ArrayBuffer` |
 | `resolveFile` | Relative URLs | Supply the `.radc` pages of a split scene yourself: `(filename, signal) => URL \| Blob \| Uint8Array \| ArrayBuffer`, directly or as a promise |
 | `group` | New `THREE.Group` | Group that holds the scene |
-| `splatBudget` | `3_000_000` | Maximum number of Splats shown at once. Higher values show more detail and use more memory |
+| `splatBudget` | `3_000_000` | Target number of Splats. Higher values show more detail and use more memory |
+| `splatBudgetTolerance` | `0.1` | Allowed fractional overshoot of `splatBudget`. `0.1` allows up to 10% extra Splats; `0` keeps each new selection within `splatBudget`. Must be finite and nonnegative |
 | `maxResidentCpuBytes` | 2 GiB | CPU memory budget for cached data, in bytes. Set a positive integer when creating the scheduler |
 | `maxResidentGpuBytes` | 1 GiB | GPU memory budget for cached data, in bytes. Set a positive integer when creating the scheduler |
 | `fadeDurationMs` | `200` | Duration of the fade when the scene first appears and when detail changes; `0` switches instantly |
 | `cooldownMs` | `2000` | How long unused detail stays ready for reuse; it can be released sooner when either memory budget is reached. `0` releases it at once |
-| `maxConcurrentLoads` | `4` | Maximum number of loads in progress at the same time |
+| `maxConcurrentLoads` | `4` | Maximum number of simultaneous loads, regardless of page size. |
 | `manager` | `THREE.DefaultLoadingManager` | Three.js loading manager, including its URL modifiers |
 | `requestHeader` / `withCredentials` | `{}` / `false` | Request settings. Sensitive settings are not sent to other origins |
 | `onChange` | — | Called when the scene needs a redraw |
 | `onError` | Logs to the console | Called when loading fails: `(error, url)` |
 
-Detail already on screen stays visible while its replacement loads, if both memory budgets allow. At the limit, the scene may temporarily show less detail. During a fade, old and new detail overlap, so the scene can briefly exceed `splatBudget`; use `fadeDurationMs: 0` to prevent this.
+Detail already on screen stays visible while its replacement loads, if both memory budgets allow. At the limit, the scene may temporarily show less detail. During a fade, old and new detail overlap, so the visible count can briefly exceed the selection limit. Use both `splatBudgetTolerance: 0` and `fadeDurationMs: 0` to keep new selections and their transitions within `splatBudget`.
 
 Unused detail is released after `cooldownMs`, including while hidden, and loads again when needed.
 
@@ -95,6 +97,7 @@ Unused detail is released after `cooldownMs`, including while hidden, and loads 
 | --- | --- |
 | `group` | Group that holds the scene |
 | `splatBudget` | Change it at any time to adjust detail, even while the camera is still. Must be a positive integer |
+| `splatBudgetTolerance` | Change the allowed overshoot at any time without reloading. `0` forbids overshoot |
 | `initialized` | Resolves when the scene is set up; rejects for invalid or unsupported files |
 | `firstRenderable` | Resolves when the first data is on screen, or the scene is empty; rejects if the first data cannot be loaded. Keep calling `update()` while you wait |
 | `setCamera(camera)` / `deleteCamera(camera)` | Add or remove a camera that chooses detail. `hasCamera(camera)` and `cameras` report the registered ones |

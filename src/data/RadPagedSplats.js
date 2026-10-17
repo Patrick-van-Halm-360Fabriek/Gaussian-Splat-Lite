@@ -46,6 +46,7 @@ export class RadPagedSplats extends IndexedSplats {
       layerSize: layout.pageStride,
       numSh: options.numSh,
       blockBits: 0,
+      packedOpacityGroups: true,
     });
     this.fadeProgress = 1;
     this.fadeKinds = 0;

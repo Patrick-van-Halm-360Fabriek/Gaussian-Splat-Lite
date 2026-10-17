@@ -10,7 +10,7 @@ export type StreamSchedulerOptions = {
   /** Milliseconds to retain unused data after fade-out; defaults to 2000. */
   cooldownMs?: number;
   fadeDurationMs?: number;
-  /** Active downloads/decodes. Ready copies use a separate bounded byte queue. */
+  /** Maximum simultaneous downloads/decodes; defaults to 4. */
   maxConcurrentLoads?: number;
   onChange?: () => void;
   onError?: (error: unknown, url: string) => void;
@@ -27,7 +27,7 @@ export type StreamStats = {
   residentGpuBytes: number;
   /** Sum of residentCpuBytes and residentGpuBytes. */
   residentBytes: number;
-  /** Reserved or ready copies awaiting publication into source storage. */
+  /** Estimated in-flight or ready copies awaiting publication into source storage. */
   pendingBytes: number;
   loadingChunks: number;
   /** Ready share of the current view's requested detail, from 0 to 1. Changes with the view. */
@@ -42,11 +42,6 @@ export declare function streamSettings(options: StreamSchedulerOptions): {
   fadeDurationMs: number;
   maxConcurrentLoads: number;
 };
-/** Bound queued decode/extraction copies independently of per-update publication. */
-export declare function streamPendingLimit(
-  concurrency: number,
-  unitBytes?: number,
-): number;
 /** Format errors are permanent; transient failures retry with capped backoff. */
 export declare function streamRetryAt(error: unknown, failures: number): number;
 export declare function notifyStreamChange(

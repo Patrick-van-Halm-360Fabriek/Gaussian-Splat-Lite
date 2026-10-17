@@ -9,23 +9,28 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Added runtime-adjustable `splatBudgetTolerance` to `RadStreamScheduler`. The default `0.1` allows each selection to exceed `splatBudget` by up to 10%; use `0` for a strict selection limit. Fades can temporarily show both old and new detail; also set `fadeDurationMs: 0` to keep transitions within the budget. See [RAD streaming](docs/RadStreamScheduler.md).
+- Added `maxResidentCpuBytes` (default 2 GiB) and `maxResidentGpuBytes` (default 1 GiB) to `RadStreamScheduler`. Detail respects both cache budgets, releasing unused detail early when needed. These are streaming cache limits, not total application memory limits.
 - Added `splatBudgetMode` to `SogStreamScheduler`: `"target"` (the default) adjusts detail to fill the budget, while `"limit"` uses the configured distance bands and only reduces detail when they exceed the budget.
 - Added runtime-adjustable `lodBaseDistance` (default `100`, for `"limit"` mode) and `lodMultiplier` (default `2`, for both modes). Changes take effect without reloading. See [SOG streaming](docs/SogStreamScheduler.md).
-- Added SOG budget mode and LOD distance controls to the viewer.
-- Added `maxResidentCpuBytes` (default 2 GiB) and `maxResidentGpuBytes` (default 1 GiB) to `RadStreamScheduler`. RAD detail now respects both cache budgets, releasing unused detail early when needed. These limits exclude pending copies, WASM memory, and renderer buffers. See [RAD streaming](docs/RadStreamScheduler.md).
-- Added `residentCpuBytes`, `residentGpuBytes`, and `loadProgress` to RAD and SOG streaming stats. Memory figures estimate retained streaming data; `residentBytes` remains their sum. Loading progress describes the current view and changes as the view changes.
+- Added `residentCpuBytes`, `residentGpuBytes`, and `loadProgress` to RAD and SOG streaming stats. Memory figures estimate retained streaming data; `residentBytes` remains their sum. Loading progress tracks the current view and can change as the camera moves.
+- Added SOG budget mode and LOD distance controls to the viewer, along with current-view loading progress and separate CPU/GPU cache estimates for streamed models.
 
 ### Changed
 
-- Streamed SOG now selects detail directly from distance bands. All populated LOD levels remain available, including levels with equal splat counts; missing intermediate levels resolve to the next finer available level.
-- Reduced RAD LOD selection work when the remaining splat budget prevents further refinement.
+- Reworked RAD detail selection to reduce selection overhead, including with `splatBudgetTolerance: 0`. The selected detail may differ from previous versions within the configured budget and tolerance.
 - RAD detail now uses the same threshold when refining and coarsening.
-- RAD streaming can select the next view while preparing a display update. Selection preparation and indexed Splat center copying also do less work.
-- The viewer now shows current-view loading progress and separate CPU/GPU cache estimates for streamed models.
+- RAD streaming can select the next view while preparing a display update, and upload decoded data while its detail information is still being prepared. Loading concurrency follows `maxConcurrentLoads` regardless of page size.
+- Reduced memory use and upload volume for RAD detail fades, and reduced work when preparing selections and copying indexed Splat centers.
+- Streamed SOG now selects detail directly from distance bands. All populated LOD levels remain available, including levels with equal Splat counts; missing intermediate levels resolve to the next finer available level.
 
 ### Fixed
 
 - The viewer now waits for streamed SOG content to become renderable before dismissing the loading screen, and shows RAD and SOG streaming errors as notifications.
+
+### Removed
+
+- Removed the pending-data byte limits from RAD and SOG streaming. Downloads and decoding remain limited by `maxConcurrentLoads`, but large detail updates may use more temporary memory.
 
 ## [1.3.0] - 2026-10-14
 

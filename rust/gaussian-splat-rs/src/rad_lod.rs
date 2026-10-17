@@ -1,7 +1,7 @@
 //! Resident RAD tree traversal. Source indices and projection arithmetic retain
 //! the same ordering and f64 precision as the streaming scheduler.
 
-use std::{cmp::Ordering, collections::BinaryHeap, ops::Range};
+use std::ops::Range;
 
 use anyhow::{ensure, Context, Result};
 use gaussian_splat_lib::rad::RadMeta;
@@ -54,31 +54,11 @@ fn visit_range(bits: &mut [u64], range: Range<usize>) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Copy)]
 struct Candidate {
     index: u32,
     // Reject unaffordable refinements without looking up their tree page.
     child_count: u32,
-    key: i64,
-}
-
-impl PartialEq for Candidate {
-    fn eq(&self, other: &Self) -> bool {
-        self.index == other.index && self.key == other.key
-    }
-}
-impl Eq for Candidate {}
-impl PartialOrd for Candidate {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl Ord for Candidate {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.key
-            .cmp(&other.key)
-            .then_with(|| other.index.cmp(&self.index))
-    }
+    size: f64,
 }
 
 // Model-view matrix, pixel scale, projection type, and X/Y projection rows.
@@ -217,7 +197,8 @@ pub struct RadLodTree {
     count: u32,
     chunk_size: u32,
     pages: Vec<Page>,
-    heap: BinaryHeap<Candidate>,
+    stack: Vec<Candidate>,
+    frontier: Vec<Candidate>,
     indices: Vec<u32>,
     wanted: Vec<u32>,
     touched: Vec<u32>,
@@ -248,7 +229,8 @@ impl RadLodTree {
             count: meta.count as u32,
             chunk_size: meta.chunk_size.unwrap_or(meta.count as u32),
             pages,
-            heap: BinaryHeap::new(),
+            stack: Vec::new(),
+            frontier: Vec::new(),
             indices: Vec::new(),
             wanted: Vec::new(),
             touched: Vec::new(),
@@ -334,10 +316,13 @@ impl RadLodTree {
         budget: u32,
         threshold: f64,
         page_budget: u32,
+        budget_tolerance: f64,
     ) -> Result<JsValue, JsValue> {
         let views = views.to_vec();
         if budget == 0
             || page_budget == 0
+            || !budget_tolerance.is_finite()
+            || budget_tolerance < 0.0
             || !threshold.is_finite()
             || threshold <= 0.0
             || views.is_empty()
@@ -356,6 +341,7 @@ impl RadLodTree {
             budget,
             threshold,
             page_budget,
+            budget_tolerance,
         )
         .map_err(js_error)?;
         let result = Object::new();
@@ -414,15 +400,69 @@ impl RadLodTree {
             if size <= threshold {
                 continue;
             }
-            // Cache f64::total_cmp's exact key once instead of at every heap comparison.
-            let bits = size.to_bits() as i64;
-            let key = bits ^ (((bits >> 63) as u64 >> 1) as i64);
-            self.heap.push(Candidate {
+            let candidate = Candidate {
                 index: page.base + local as u32,
                 child_count: u32::from(count),
-                key,
-            });
+                size,
+            };
+            self.stack.push(candidate);
         }
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn refine(
+        &mut self,
+        candidate: Candidate,
+        remaining: &mut u32,
+        views: &[View],
+        threshold: f64,
+        page_budget: u32,
+    ) -> Result<()> {
+        let parent_page = self.page_index(candidate.index);
+        let page = &self.pages[parent_page];
+        let local = (candidate.index - page.base) as usize;
+        let tree = page.tree.as_ref().unwrap();
+        let start = *tree
+            .child_start
+            .get(local)
+            .context("RAD child range is out of bounds")?;
+        let end = start as u64 + candidate.child_count as u64;
+        ensure!(end <= self.count as u64, "RAD child range is out of bounds");
+        let first = self.page_index(start);
+        let last = self.page_index((end - 1) as u32);
+        // Claim pages in refinement priority order, including missing pages.
+        // Keeping the parent when its children do not fit produces a complete
+        // coarser cut and lets the scheduler retire lower-priority old pages.
+        let new_pages = (first..=last)
+            .filter(|&index| !self.pages[index].touched && !self.pages[index].wanted)
+            .count();
+        if self.touched.len() + self.wanted.len() + new_pages > page_budget as usize {
+            return Ok(());
+        }
+        let mut ready = true;
+        for index in first..=last {
+            let page = &mut self.pages[index];
+            if page.resident {
+                self.touch(index);
+            } else {
+                if !page.wanted {
+                    page.wanted = true;
+                    self.wanted.push(index as u32);
+                }
+                ready = false;
+            }
+        }
+        if !ready {
+            return Ok(());
+        }
+        *remaining -= candidate.child_count - 1;
+        for child_page in first..=last {
+            let page = &self.pages[child_page];
+            let children = start.max(page.base)..(end as u32).min(page.base + page.count);
+            self.enqueue_range(children, child_page, *remaining + 1, views, threshold)?;
+        }
+        insert(&mut self.pages[parent_page].refined, local);
         Ok(())
     }
 
@@ -433,8 +473,10 @@ impl RadLodTree {
         budget: u32,
         threshold: f64,
         page_budget: u32,
+        budget_tolerance: f64,
     ) -> Result<()> {
-        self.heap.clear();
+        self.stack.clear();
+        self.frontier.clear();
         self.indices.clear();
         self.wanted.clear();
         self.touched.clear();
@@ -458,69 +500,41 @@ impl RadLodTree {
             return Ok(());
         }
         self.touch(0);
-        self.enqueue_range(0..1, 0, budget, views, threshold)?;
-        let mut remaining = budget - 1;
-        let mut budget_pruned = false;
-        while let Some(candidate) = self.heap.pop() {
-            let count = candidate.child_count;
-            if count > remaining + 1 {
-                if !budget_pruned || remaining == 0 {
-                    // Prune near the budget limit and once more when exhausted.
-                    // Unary refinements still fit without consuming another slot.
-                    self.heap
-                        .retain(|candidate| candidate.child_count <= remaining + 1);
-                    budget_pruned = true;
+        let cap = (budget as f64 * (1.0 + budget_tolerance)).min(self.count as f64) as u32;
+        let mut remaining = cap - 1;
+        self.enqueue_range(0..1, 0, cap, views, threshold)?;
+        let mut current = (threshold * 1000.0).min(f64::MAX);
+        loop {
+            // Finish a threshold round before stopping at the target, but
+            // never exceed the allowed cap, even for a large sibling group.
+            let unary_only = cap - remaining >= budget;
+            if unary_only {
+                current = threshold;
+            }
+            while let Some(candidate) = self.stack.pop() {
+                if candidate.child_count > remaining + 1
+                    || (unary_only && candidate.child_count != 1)
+                {
+                    continue;
                 }
-                continue;
-            }
-            let parent_page = self.page_index(candidate.index);
-            let page = &self.pages[parent_page];
-            let local = (candidate.index - page.base) as usize;
-            let tree = page.tree.as_ref().unwrap();
-            let start = *tree
-                .child_start
-                .get(local)
-                .context("RAD child range is out of bounds")?;
-            let end = start as u64 + count as u64;
-            ensure!(end <= self.count as u64, "RAD child range is out of bounds");
-            let first = self.page_index(start);
-            let last = self.page_index((end - 1) as u32);
-            // Claim pages in refinement priority order, including missing pages.
-            // Keeping the parent when its children do not fit produces a complete
-            // coarser cut and lets the scheduler retire lower-priority old pages.
-            let new_pages = (first..=last)
-                .filter(|&index| !self.pages[index].touched && !self.pages[index].wanted)
-                .count();
-            if self.touched.len() + self.wanted.len() + new_pages > page_budget as usize {
-                continue;
-            }
-            let mut ready = true;
-            for index in first..=last {
-                let page = &mut self.pages[index];
-                if page.resident {
-                    self.touch(index);
-                } else {
-                    if !page.wanted {
-                        page.wanted = true;
-                        self.wanted.push(index as u32);
-                    }
-                    ready = false;
+                if candidate.size <= current {
+                    self.frontier.push(candidate);
+                    continue;
                 }
+                self.refine(candidate, &mut remaining, views, threshold, page_budget)?;
             }
-            if !ready {
-                continue;
+            if self.frontier.is_empty() || current == threshold {
+                break;
             }
-            remaining -= count - 1;
-            for child_page in first..=last {
-                let page = &self.pages[child_page];
-                let children = start.max(page.base)..(end as u32).min(page.base + page.count);
-                self.enqueue_range(children, child_page, remaining + 1, views, threshold)?;
-            }
-            insert(&mut self.pages[parent_page].refined, local);
+            let ratio = (cap - remaining) as f64 / budget as f64;
+            current = (0.99 * current * ratio.sqrt())
+                .max(0.5 * current)
+                .max(threshold);
+            std::mem::swap(&mut self.stack, &mut self.frontier);
         }
         // Every seen node remains in the cut unless it was successfully refined.
         // Ordered pages and set bits produce stable source order without sorting.
-        self.indices.reserve((budget - remaining) as usize);
+        self.indices.reserve((cap - remaining) as usize);
         for page in &self.pages {
             for (word, (&seen, &refined)) in page.seen.iter().zip(&page.refined).enumerate() {
                 let mut selected = seen & !refined;

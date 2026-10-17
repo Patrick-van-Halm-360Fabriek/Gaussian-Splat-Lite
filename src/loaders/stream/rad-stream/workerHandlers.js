@@ -160,6 +160,7 @@ export function createRadStreamHandlers() {
           Math.min(request.splatBudget, header.meta.count || 1),
           request.pixelThreshold,
           request.pageBudget,
+          request.splatBudgetTolerance,
         ),
       );
       return selections.prepare(header.meta, selected, request);

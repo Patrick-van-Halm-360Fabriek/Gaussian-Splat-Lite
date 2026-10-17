@@ -1,6 +1,8 @@
 import type * as THREE from "three";
 /** Source blocks hold group IDs; a small float32 table holds their opacities. */
 export declare class SplatOpacityTable {
+  /** Store sixteen two-bit fixed group IDs per word instead of one arbitrary ID. */
+  readonly packedGroups: boolean;
   private blocks;
   private readonly blockSize;
   private readonly blocksPerLayer;
@@ -13,7 +15,12 @@ export declare class SplatOpacityTable {
   private readonly ranges;
   private readonly freeGroups;
   private nextGroup;
-  constructor(capacity: number, layerSize: number, blockBits: number);
+  constructor(
+    capacity: number,
+    layerSize: number,
+    blockBits: number,
+    packedGroups?: boolean,
+  );
   private createTexture;
   private createValueTexture;
   /** CPU arrays and GPU storage each occupy this many bytes. */
@@ -21,7 +28,7 @@ export declare class SplatOpacityTable {
   getOpacity(source: number): number;
   setGroupOpacity(group: number, opacity: number): boolean;
   private releaseBlock;
-  /** Validated ranges retain their group while only its coefficient changes. */
+  /** Unpacked ranges retain their group while only its coefficient changes. */
   setOpacity(start: number, count: number, opacity: number): boolean;
   copyBlocks(): Uint32Array<ArrayBuffer>;
   /** Adopt a prepared RAD table, retaining any uploads still pending. */

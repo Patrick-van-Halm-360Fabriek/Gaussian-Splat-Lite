@@ -9,6 +9,7 @@ type IndexedSplatsOptions = {
   layerSize: number;
   numSh: number;
   blockBits: number;
+  packedOpacityGroups?: boolean;
 };
 type DecodedSplat = ReturnType<typeof decodeSplat>;
 type DecodedSplatWithSh = DecodedSplat & {
@@ -30,7 +31,13 @@ export declare abstract class IndexedSplats extends Splats {
   private disposed;
   private readonly spatialChunks;
   private spatialBoundsBytes;
-  constructor({ capacity, layerSize, numSh, blockBits }: IndexedSplatsOptions);
+  constructor({
+    capacity,
+    layerSize,
+    numSh,
+    blockBits,
+    packedOpacityGroups,
+  }: IndexedSplatsOptions);
   protected assertLive(): void;
   initialize(options?: SplatsOptions): Promise<Splats>;
   /** Range-based sources can materialize their visible map lazily. */

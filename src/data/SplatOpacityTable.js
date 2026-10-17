@@ -3,7 +3,8 @@ import { SPLAT_TEX_HEIGHT, SPLAT_TEX_WIDTH } from "./defines.js";
 const GROUP_LAYER_SIZE = SPLAT_TEX_WIDTH * SPLAT_TEX_HEIGHT;
 /** Source blocks hold group IDs; a small float32 table holds their opacities. */
 export class SplatOpacityTable {
-  constructor(capacity, layerSize, blockBits) {
+  constructor(capacity, layerSize, blockBits, packedGroups = false) {
+    this.packedGroups = packedGroups;
     this.dirty = false;
     // Transparent, stable, RAD incoming and RAD outgoing groups.
     this.values = new Float32Array([0, 1, 0, 1]);
@@ -13,8 +14,10 @@ export class SplatOpacityTable {
     this.freeGroups = [];
     this.nextGroup = 4;
     this.blockSize = 2 ** blockBits;
-    this.blocksPerLayer = layerSize / this.blockSize;
-    this.blocks = new Uint32Array(capacity / this.blockSize);
+    // RAD's four fixed groups fit in two bits; SOG allocates arbitrary group IDs.
+    const groupsPerWord = packedGroups ? 16 : 1;
+    this.blocksPerLayer = layerSize / this.blockSize / groupsPerWord;
+    this.blocks = new Uint32Array(capacity / this.blockSize / groupsPerWord);
     const width = Math.min(SPLAT_TEX_WIDTH, this.blocksPerLayer);
     this.blockTexture = this.createTexture(
       this.blocks,
@@ -48,7 +51,11 @@ export class SplatOpacityTable {
     return this.blocks.byteLength + this.values.byteLength;
   }
   getOpacity(source) {
-    return this.values[this.blocks[Math.floor(source / this.blockSize)]];
+    const block = Math.floor(source / this.blockSize);
+    const group = this.packedGroups
+      ? (this.blocks[block >>> 4] >>> ((block & 15) * 2)) & 3
+      : this.blocks[block];
+    return this.values[group];
   }
   setGroupOpacity(group, opacity) {
     const value = Math.fround(opacity);
@@ -65,7 +72,7 @@ export class SplatOpacityTable {
       this.freeGroups.push(group);
     }
   }
-  /** Validated ranges retain their group while only its coefficient changes. */
+  /** Unpacked ranges retain their group while only its coefficient changes. */
   setOpacity(start, count, opacity) {
     const first = Math.floor(start / this.blockSize);
     const last = Math.ceil((start + count) / this.blockSize);

@@ -4,6 +4,8 @@ import type { StreamSchedulerOptions, StreamStats } from "../streamOptions.js";
 import type { RadStreamLoaderOptions } from "./RadStreamLoader.js";
 export type RadStreamSchedulerOptions = RadStreamLoaderOptions &
   StreamSchedulerOptions & {
+    /** Allowed fractional splat budget overshoot. Default: 0.1; 0 forbids overshoot. */
+    splatBudgetTolerance?: number;
     /** Retained CPU byte budget, excluding pending copies and WASM. Default: 2 GiB. */
     maxResidentCpuBytes?: number;
     /** Estimated GPU byte budget for resident streaming data. Default: 1 GiB. */
@@ -26,6 +28,7 @@ export declare class RadStreamScheduler {
   readonly maxResidentCpuBytes: number;
   readonly maxResidentGpuBytes: number;
   private _splatBudget;
+  private _splatBudgetTolerance;
   private readonly loader;
   private readonly abort;
   private readonly streamCameras;
@@ -54,9 +57,12 @@ export declare class RadStreamScheduler {
   private resolveFirst;
   private rejectFirst;
   constructor(options: RadStreamSchedulerOptions);
-  /** Selected-node budget. Assigning a new value requests LOD selection. */
+  /** Target selected-node budget. Assigning a new value requests LOD selection. */
   get splatBudget(): number;
   set splatBudget(value: number);
+  /** Allowed fractional budget overshoot; zero forbids overshoot. */
+  get splatBudgetTolerance(): number;
+  set splatBudgetTolerance(value: number);
   /** Cameras that select detail, in registration order. */
   get cameras(): readonly THREE.Camera[];
   hasCamera(camera: THREE.Camera): boolean;

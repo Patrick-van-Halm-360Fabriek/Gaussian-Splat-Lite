@@ -15,6 +15,7 @@ uniform usampler2DArray sourceSplats2;
 uniform uint sourceLayerBits;
 uniform uint sourceLayerMask;
 uniform uint sourceBlockBits;
+uniform bool sourcePackedGroups;
 uniform usampler2DArray sourceBlocks;
 uniform usampler2DArray sourceOpacities;
 uniform bool sourceIndexed;
@@ -306,14 +307,17 @@ void produceSplat(int index) {
     #endif
     float blockOpacity = 1.0;
     if (sourceBlockBits < 32u) {
-        // Group layers follow the source layers, at one texel per block.
-        uint blockMask = sourceLayerMask >> sourceBlockBits;
-        uint block = sourceIndex >> sourceBlockBits;
+        // RAD packs sixteen two-bit groups per texel; SOG keeps one ID per block.
+        uint groupIndex = sourceIndex >> sourceBlockBits;
+        uint packing = sourcePackedGroups ? 4u : 0u;
+        uint blockMask = sourceLayerMask >> (sourceBlockBits + packing);
+        uint block = groupIndex >> packing;
         uint group = texelFetch(sourceBlocks, ivec3(
             block & min(blockMask, SPLAT_TEX_WIDTH_MASK),
             (block & blockMask) >> SPLAT_TEX_WIDTH_BITS,
             sourceIndex >> sourceLayerBits
         ), 0).r;
+        if (sourcePackedGroups) group = (group >> ((groupIndex & 15u) * 2u)) & 3u;
         blockOpacity = uintBitsToFloat(texelFetch(sourceOpacities, splatTexCoord(int(group)), 0).r);
     }
     if (blockOpacity <= 0.0) return;

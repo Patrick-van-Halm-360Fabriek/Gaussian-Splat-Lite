@@ -19,6 +19,7 @@ export type RadSelectionRange = {
 };
 export type RadSelectionSnapshot = {
   pageCount: number;
+  /** Sixteen two-bit RAD group IDs per word, in source storage order. */
   opacityBlocks: Uint32Array;
   ranges: RadSelectionRange[];
 };

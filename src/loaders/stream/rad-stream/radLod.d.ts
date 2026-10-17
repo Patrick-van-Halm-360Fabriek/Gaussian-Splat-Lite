@@ -22,6 +22,7 @@ export type RadLodView = {
 export type RadLodRequest = {
   views: RadLodView[];
   splatBudget: number;
+  splatBudgetTolerance: number;
   /** Combined limit for resident tree paths and requested pages. */
   pageBudget: number;
   pixelThreshold: number;

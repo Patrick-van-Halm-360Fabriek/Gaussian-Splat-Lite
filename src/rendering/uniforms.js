@@ -85,6 +85,7 @@ export function makeGenerateUniforms() {
       value: (1 << (SPLAT_TEX_WIDTH_BITS + SPLAT_TEX_HEIGHT_BITS)) - 1,
     },
     sourceBlockBits: { value: SPLAT_BLOCKS_DISABLED },
+    sourcePackedGroups: { value: false },
     sourceBlocks: { value: emptySplatTexture },
     sourceOpacities: { value: emptySplatTexture },
     sourceIndexed: { value: false },

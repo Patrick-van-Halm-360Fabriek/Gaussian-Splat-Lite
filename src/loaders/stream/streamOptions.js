@@ -26,11 +26,6 @@ export function streamSettings(options) {
     maxConcurrentLoads,
   };
 }
-/** Bound queued decode/extraction copies independently of per-update publication. */
-export function streamPendingLimit(concurrency, unitBytes = 0) {
-  const pendingBytesPerLoad = 8 * 1024 * 1024;
-  return concurrency * Math.max(pendingBytesPerLoad, unitBytes);
-}
 /** Format errors are permanent; transient failures retry with capped backoff. */
 export function streamRetryAt(error, failures) {
   const failure = error;
