@@ -18,6 +18,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Reduced repeating noise patterns in stochastic rendering across WebGL and WebGPU.
 - Reworked RAD detail selection to reduce selection overhead, including with `splatBudgetTolerance: 0`. The selected detail may differ from previous versions within the configured budget and tolerance.
 - RAD detail now uses the same threshold when refining and coarsening.
 - RAD streaming can select the next view while preparing a display update, and upload decoded data while its detail information is still being prepared. Loading concurrency follows `maxConcurrentLoads` regardless of page size.

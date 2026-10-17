@@ -46,8 +46,13 @@ void main() {
         discard;
     }
     #if GSL_STOCHASTIC
-    uvec2 offset = uvec2(vStochasticOffset, vStochasticOffset >> 5u);
-    ivec2 coord = ivec2((uvec2(gl_FragCoord.xy) + offset) & uvec2(31u));
+    // Match TSL: quadratic block offsets break short spatial repetitions
+    // without changing the STBN time sequence.
+    uvec2 offset = uvec2(vStochasticOffset, vStochasticOffset >> 5u) & uvec2(31u);
+    uvec2 pixel = uvec2(gl_FragCoord.xy) + offset;
+    uvec2 tile = pixel >> 5u;
+    uvec2 shift = ((tile * (tile + 1u)) >> 1u) + tile.x * tile.y + tile.yx;
+    ivec2 coord = ivec2((pixel + shift) & uvec2(31u));
     coord.y += int(vStochasticOffset >> 10u) * 32;
     float randomValue = (float(texelFetch(stochasticNoise, coord, 0).r) + 0.5) / 32768.0;
     #ifdef GSL_COVERAGE_SAMPLES

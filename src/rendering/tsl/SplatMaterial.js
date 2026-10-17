@@ -55,13 +55,23 @@ function createSplatFragment(minAlpha, edgeFade, stochasticNoise, coverage) {
     const alpha = peakAlpha.add(fade).mul(kernelAlpha).sub(fade).toVar();
     alpha.lessThan(minAlpha).discard();
     if (stochasticNoise && vStochasticOffset) {
-      const pixel = N.uvec2(N.screenCoordinate.xy);
+      // Stagger blocks per Splat, then vary their spatial offset quadratically.
+      // The offset stays fixed over time, preserving each pixel's STBN sequence.
+      const seedOffset = N.uvec2(
+        vStochasticOffset,
+        vStochasticOffset.shiftRight(5),
+      ).bitAnd(31);
+      const pixel = N.uvec2(N.screenCoordinate.xy).add(seedOffset).toVar();
+      const tile = pixel.shiftRight(N.uvec2(5)).toVar();
+      const shift = tile
+        .mul(tile.add(1))
+        .shiftRight(N.uvec2(1))
+        .add(tile.x.mul(tile.y))
+        .add(tile.yx);
+      const sample = pixel.add(shift).bitAnd(31).toVar();
       const coord = N.ivec2(
-        pixel.x.add(vStochasticOffset).bitAnd(31),
-        pixel.y
-          .add(vStochasticOffset.shiftRight(5))
-          .bitAnd(31)
-          .add(vStochasticOffset.shiftRight(10).mul(32)),
+        sample.x,
+        sample.y.add(vStochasticOffset.shiftRight(10).mul(32)),
       );
       const randomValue = N.float(load2D(stochasticNoise, coord).r)
         .add(0.5)
