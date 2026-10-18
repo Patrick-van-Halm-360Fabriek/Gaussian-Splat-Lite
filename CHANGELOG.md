@@ -7,9 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-10-18
+
 ### Added
 
 - Added SH4 decoding for PLY and SPZ and rendering on WebGL, WebGPU, and the WebGL2 fallback. `Splats.getSplat()` and `postDecode` now expose all 24 view-dependent RGB coefficients.
+- Added a Max SH control to the viewer, from SH0 to SH4. Changes apply immediately to regular and streamed models; the default uses all available coefficients.
 
 ### Changed
 
@@ -618,7 +621,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Initial public release of the Three.js Gaussian Splatting renderer.
 
-[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.2...HEAD
+[1.3.2]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.2.1...v1.2.2
