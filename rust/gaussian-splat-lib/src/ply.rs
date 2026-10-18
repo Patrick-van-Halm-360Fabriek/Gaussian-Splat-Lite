@@ -163,7 +163,7 @@ impl<T: SplatReceiver> PlyDecoder<T> {
                 break;
             }
 
-            state.output.ensure(count, [false; 3]);
+            state.output.ensure(count, [false; 4]);
 
             for i in 0..count {
                 let [i3, i4] = [i * 3, i * 4];
@@ -188,7 +188,7 @@ impl<T: SplatReceiver> PlyDecoder<T> {
                 count,
                 &SplatProps {
                     scale: &state.output.scale[..count * 3],
-                    ..state.output.props(count, [false; 3])
+                    ..state.output.props(count, [false; 4])
                 },
             );
 
@@ -204,10 +204,11 @@ impl<T: SplatReceiver> PlyDecoder<T> {
         let Some(PlyState::Standard(state)) = self.state.as_mut() else {
             unreachable!()
         };
-        let sh_props: [Option<&[PlyProperty]>; 3] = [
+        let sh_props: [Option<&[PlyProperty]>; 4] = [
             state.sh1.as_ref().map(|p| p.as_slice()),
             state.sh2.as_ref().map(|p| p.as_slice()),
             state.sh3.as_ref().map(|p| p.as_slice()),
+            state.sh4.as_ref().map(|p| p.as_slice()),
         ];
         let packed_sh = sh_props.map(|props| {
             props.is_some_and(|p| p.iter().all(|p| matches!(p.ty, PlyPropertyType::Uchar)))
@@ -216,6 +217,7 @@ impl<T: SplatReceiver> PlyDecoder<T> {
         let sh1 = state.sh1.filter(|_| !packed_sh[0]);
         let sh2 = state.sh2.filter(|_| !packed_sh[1]);
         let sh3 = state.sh3.filter(|_| !packed_sh[2]);
+        let sh4 = state.sh4.filter(|_| !packed_sh[3]);
         let mut offset = 0;
         loop {
             let available = (self.buffer.len() - offset) / state.record_size;
@@ -269,6 +271,12 @@ impl<T: SplatReceiver> PlyDecoder<T> {
                     let i21 = i * 21;
                     for (d, property) in sh3.iter().enumerate() {
                         state.output.sh3[i21 + d] = property.get_f32(&self.buffer, base);
+                    }
+                }
+                if let Some(sh4) = sh4 {
+                    let i27 = i * 27;
+                    for (d, property) in sh4.iter().enumerate() {
+                        state.output.sh4[i27 + d] = property.get_f32(&self.buffer, base);
                     }
                 }
             }
@@ -345,7 +353,7 @@ impl<T: SplatReceiver> PlyDecoder<T> {
                     self.splats.set_batch_ln_scale(
                         elem_read,
                         chunk,
-                        &state.output.props(chunk, [false; 3]),
+                        &state.output.props(chunk, [false; 4]),
                         &state.output.scale[..chunk * 3],
                     );
                 }
@@ -357,11 +365,15 @@ impl<T: SplatReceiver> PlyDecoder<T> {
                             .all(|p| matches!(p.ty, PlyPropertyType::Uchar)) =>
                     {
                         let lookup = &*COMPRESSED_SH_LOOKUP;
-                        for (band, indices) in
-                            [&props.sh1_props, &props.sh2_props, &props.sh3_props]
-                                .into_iter()
-                                .enumerate()
-                                .take(state.max_sh_degree)
+                        for (band, indices) in [
+                            &props.sh1_props,
+                            &props.sh2_props,
+                            &props.sh3_props,
+                            &props.sh4_props,
+                        ]
+                        .into_iter()
+                        .enumerate()
+                        .take(state.max_sh_degree)
                         {
                             self.splats
                                 .set_sh_packed(elem_read, chunk, band + 1, |i, k| {
@@ -386,6 +398,11 @@ impl<T: SplatReceiver> PlyDecoder<T> {
                             },
                             if state.max_sh_degree >= 3 {
                                 &state.output.sh3[..chunk * 21]
+                            } else {
+                                &[][..]
+                            },
+                            if state.max_sh_degree >= 4 {
+                                &state.output.sh4[..chunk * 27]
                             } else {
                                 &[][..]
                             },
@@ -749,6 +766,7 @@ struct SuperSplatShProps {
     sh1_props: Vec<usize>,
     sh2_props: Vec<usize>,
     sh3_props: Vec<usize>,
+    sh4_props: Vec<usize>,
     num_f_rest: usize,
 }
 
@@ -762,10 +780,11 @@ struct PlyOutput {
     sh1: Vec<f32>,
     sh2: Vec<f32>,
     sh3: Vec<f32>,
+    sh4: Vec<f32>,
 }
 
 impl PlyOutput {
-    fn ensure(&mut self, count: usize, float_sh: [bool; 3]) {
+    fn ensure(&mut self, count: usize, float_sh: [bool; 4]) {
         for (output, width) in [
             (&mut self.center, 3),
             (&mut self.opacity, 1),
@@ -775,6 +794,7 @@ impl PlyOutput {
             (&mut self.sh1, if float_sh[0] { 9 } else { 0 }),
             (&mut self.sh2, if float_sh[1] { 15 } else { 0 }),
             (&mut self.sh3, if float_sh[2] { 21 } else { 0 }),
+            (&mut self.sh4, if float_sh[3] { 27 } else { 0 }),
         ] {
             if output.len() < count * width {
                 output.resize(count * width, 0.0);
@@ -784,7 +804,7 @@ impl PlyOutput {
 
     // Scale is supplied separately: point clouds use linear scale, while
     // standard and SuperSplat PLY records provide natural-log scale.
-    fn props(&self, count: usize, float_sh: [bool; 3]) -> SplatProps<'_> {
+    fn props(&self, count: usize, float_sh: [bool; 4]) -> SplatProps<'_> {
         SplatProps {
             center: &self.center[..count * 3],
             opacity: &self.opacity[..count],
@@ -793,6 +813,7 @@ impl PlyOutput {
             sh1: &self.sh1[..if float_sh[0] { count * 9 } else { 0 }],
             sh2: &self.sh2[..if float_sh[1] { count * 15 } else { 0 }],
             sh3: &self.sh3[..if float_sh[2] { count * 21 } else { 0 }],
+            sh4: &self.sh4[..if float_sh[3] { count * 27 } else { 0 }],
             ..Default::default()
         }
     }
@@ -883,12 +904,16 @@ impl SuperSplatState {
                 let sh3_props: Vec<usize> = (0..7)
                     .flat_map(|k| (0..3).map(move |d| 8 + k + d * stride))
                     .collect();
+                let sh4_props: Vec<usize> = (0..9)
+                    .flat_map(|k| (0..3).map(move |d| 15 + k + d * stride))
+                    .collect();
 
                 SuperSplatShProps {
                     f_rest,
                     sh1_props,
                     sh2_props,
                     sh3_props,
+                    sh4_props,
                     num_f_rest,
                 }
             })
@@ -987,7 +1012,7 @@ impl SuperSplatState {
         record_size: usize,
         data: &[u8],
     ) -> anyhow::Result<()> {
-        self.output.ensure(count, [false; 3]);
+        self.output.ensure(count, [false; 4]);
 
         for i in 0..count {
             let splat_index = base_index + i;
@@ -1107,6 +1132,12 @@ impl SuperSplatState {
                     self.output.sh3[start + j] = self.temp_rest[*idx] * 8.0 / 255.0 - 4.0;
                 }
             }
+            if self.max_sh_degree >= 4 {
+                let start = i * 27;
+                for (j, idx) in sh_props.sh4_props.iter().enumerate() {
+                    self.output.sh4[start + j] = self.temp_rest[*idx] * 8.0 / 255.0 - 4.0;
+                }
+            }
         }
     }
 }
@@ -1142,6 +1173,7 @@ struct PlyDecoderState {
     sh1: Option<[PlyProperty; 9]>,
     sh2: Option<[PlyProperty; 15]>,
     sh3: Option<[PlyProperty; 21]>,
+    sh4: Option<[PlyProperty; 27]>,
 
     output: PlyOutput,
 }
@@ -1170,6 +1202,7 @@ impl PlyDecoderState {
         let sh1 = sh_properties(properties, max_sh_degree, 1);
         let sh2 = sh_properties(properties, max_sh_degree, 2);
         let sh3 = sh_properties(properties, max_sh_degree, 3);
+        let sh4 = sh_properties(properties, max_sh_degree, 4);
 
         Ok(Self {
             num_splats,
@@ -1185,6 +1218,7 @@ impl PlyDecoderState {
             sh1,
             sh2,
             sh3,
+            sh4,
             output: PlyOutput::default(),
         })
     }
@@ -1367,6 +1401,7 @@ fn sh_degree(properties: &HashMap<String, PlyProperty>) -> anyhow::Result<usize>
         9 => Ok(1),
         24 => Ok(2),
         45 => Ok(3),
+        72 => Ok(4),
         _ => Err(anyhow!("Invalid number of f_rest properties: {count}")),
     }
 }
@@ -1386,6 +1421,7 @@ fn f_rest_offset(degree: usize) -> usize {
         1 => 3,
         2 => 8,
         3 => 15,
+        4 => 24,
         _ => unreachable!(),
     }
 }

@@ -64,7 +64,7 @@ export class SplatMesh extends THREE.Object3D {
     this.numSplats = 0;
     this.recolor = new THREE.Color(1, 1, 1);
     this.opacity = 1;
-    this.maxSh = 3;
+    this.maxSh = 4;
     this.edits = null;
     this.sdfEdits = null;
     this.version = 0;

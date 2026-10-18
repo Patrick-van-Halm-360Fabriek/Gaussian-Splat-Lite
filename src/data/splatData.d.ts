@@ -1,6 +1,13 @@
 import type { SplatExtra } from "./defines.js";
-export declare const SH_KEYS: readonly ["sh1", "sh2", "sh3a", "sh3b"];
-export declare const SH_ARRAY_COUNTS: readonly [0, 1, 2, 4];
+export declare const SH_KEYS: readonly [
+  "shBlock0",
+  "shBlock1",
+  "shBlock2",
+  "shBlock3",
+  "shBlock4",
+  "shBlock5",
+];
+export declare const SH_ARRAY_COUNTS: readonly [0, 1, 2, 4, 6];
 /** Merge cached min XYZ / max XYZ values without decoding records. */
 export declare function unionSplatBounds(
   target: Float32Array,
@@ -8,7 +15,7 @@ export declare function unionSplatBounds(
   offset?: number,
 ): void;
 export declare function resetSplatBounds(bounds: Float32Array): void;
-export declare function getSplatShDegree(extra: SplatExtra): 1 | 2 | 0 | 3;
+export declare function getSplatShDegree(extra: SplatExtra): 0 | 1 | 2 | 3 | 4;
 /** Packed texture storage; capacity includes padding, but excludes sort centers. */
 export declare function getSplatTextureBytes(
   capacity: number,

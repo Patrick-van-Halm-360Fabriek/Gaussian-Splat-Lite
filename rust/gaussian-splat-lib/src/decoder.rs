@@ -46,6 +46,7 @@ pub struct SplatProps<'a> {
     pub sh1: &'a [f32],
     pub sh2: &'a [f32],
     pub sh3: &'a [f32],
+    pub sh4: &'a [f32],
 }
 
 #[derive(Clone, Copy)]
@@ -161,12 +162,22 @@ pub trait SplatReceiver: 'static {
         }
     }
 
-    fn set_sh(&mut self, base: usize, count: usize, sh1: &[f32], sh2: &[f32], sh3: &[f32]) {}
+    fn set_sh(
+        &mut self,
+        base: usize,
+        count: usize,
+        sh1: &[f32],
+        sh2: &[f32],
+        sh3: &[f32],
+        sh4: &[f32],
+    ) {
+    }
     fn set_sh1(&mut self, base: usize, count: usize, sh1: &[f32]) {}
     fn set_sh2(&mut self, base: usize, count: usize, sh2: &[f32]) {}
     fn set_sh3(&mut self, base: usize, count: usize, sh3: &[f32]) {}
+    fn set_sh4(&mut self, base: usize, count: usize, sh4: &[f32]) {}
 
-    /// Writes one SH band (1–3); `word` receives the splat and RGB coefficient indices.
+    /// Writes one SH band (1–4); `word` receives the splat and RGB coefficient indices.
     fn set_sh_packed<F: Fn(usize, usize) -> u32>(
         &mut self,
         base: usize,
@@ -176,7 +187,7 @@ pub trait SplatReceiver: 'static {
     ) where
         Self: Sized,
     {
-        let coefficients = [3, 5, 7][band - 1];
+        let coefficients = [3, 5, 7, 9][band - 1];
         let mut values = Vec::with_capacity(count * coefficients * 3);
         for i in 0..count {
             for k in 0..coefficients {
@@ -186,7 +197,9 @@ pub trait SplatReceiver: 'static {
         match band {
             1 => self.set_sh1(base, count, &values),
             2 => self.set_sh2(base, count, &values),
-            _ => self.set_sh3(base, count, &values),
+            3 => self.set_sh3(base, count, &values),
+            4 => self.set_sh4(base, count, &values),
+            _ => unreachable!(),
         }
     }
 
@@ -200,10 +213,10 @@ pub trait SplatReceiver: 'static {
         palette: &[u32],
         labels: &[u32],
     ) {
-        let stride = [0, 4, 8, 16][degree];
+        let stride = [0, 4, 8, 16, 24][degree];
         let mut values = Vec::new();
         let mut offset = 0;
-        for (band, coefficients) in [3, 5, 7].into_iter().enumerate().take(degree) {
+        for (band, coefficients) in [3, 5, 7, 9].into_iter().enumerate().take(degree) {
             values.resize(count * coefficients * 3, 0.0);
             for (i, &label) in labels.iter().take(count).enumerate() {
                 for coefficient in 0..coefficients {
@@ -215,7 +228,9 @@ pub trait SplatReceiver: 'static {
             match band {
                 0 => self.set_sh1(base, count, &values),
                 1 => self.set_sh2(base, count, &values),
-                _ => self.set_sh3(base, count, &values),
+                2 => self.set_sh3(base, count, &values),
+                3 => self.set_sh4(base, count, &values),
+                _ => unreachable!(),
             }
             offset += coefficients;
         }

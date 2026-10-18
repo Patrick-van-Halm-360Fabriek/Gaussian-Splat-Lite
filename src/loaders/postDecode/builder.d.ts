@@ -69,7 +69,7 @@ type AttributeValue<Components extends AttributeComponents> =
         : Vec4Value;
 type SplatShCoefficientContext = {
   index: number;
-  degree: 1 | 2 | 3;
+  degree: 1 | 2 | 3 | 4;
   order: number;
 };
 declare class SplatPostDecodeShPatch {

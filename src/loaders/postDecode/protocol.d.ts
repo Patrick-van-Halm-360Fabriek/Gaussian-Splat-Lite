@@ -67,7 +67,7 @@ export declare const InputField: {
 /** @internal */
 export type InputField = (typeof InputField)[keyof typeof InputField];
 /** @internal */
-export declare const SH_COEFFICIENT_COUNT = 15;
+export declare const SH_COEFFICIENT_COUNT = 24;
 /** @internal */
 export type SplatPostDecodeValueType =
   | "float"
@@ -184,8 +184,10 @@ export type PostDecodeSplatData = {
   splat1: Uint32Array;
   sortCenters: Float32Array;
   sourceIds?: Uint32Array;
-  sh1?: Uint32Array;
-  sh2?: Uint32Array;
-  sh3a?: Uint32Array;
-  sh3b?: Uint32Array;
+  shBlock0?: Uint32Array;
+  shBlock1?: Uint32Array;
+  shBlock2?: Uint32Array;
+  shBlock3?: Uint32Array;
+  shBlock4?: Uint32Array;
+  shBlock5?: Uint32Array;
 };

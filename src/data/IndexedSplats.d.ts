@@ -19,7 +19,7 @@ type DecodedSplatWithSh = DecodedSplat & {
  * Fades affect display only: records returned to picking retain their source opacity. */
 export declare abstract class IndexedSplats extends Splats {
   readonly layerSize: number;
-  readonly numSh: 0 | 1 | 2 | 3;
+  readonly numSh: 0 | 1 | 2 | 3 | 4;
   protected readonly opacities: SplatOpacityTable;
   protected sourceIndices: Uint32Array<ArrayBuffer>;
   protected visibleIndices: Uint32Array;
@@ -55,7 +55,7 @@ export declare abstract class IndexedSplats extends Splats {
   private getStorageIndex;
   getSourceIndex(index: number): number;
   private checkVisibleRange;
-  getNumSh(): 0 | 3 | 2 | 1;
+  getNumSh(): 0 | 1 | 2 | 3 | 4;
   /** Estimated GPU storage for packed records, render indices and opacity tables. */
   get textureByteLength(): number;
   getByteLength(): number;

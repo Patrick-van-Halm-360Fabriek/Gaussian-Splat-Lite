@@ -55,7 +55,7 @@ export declare class Splats {
   getNumSplats(): number;
   /** @internal Copy cached local bounds into the target box. */
   getBoundingBox(centersOnly?: boolean, target?: THREE.Box3): THREE.Box3;
-  getNumSh(): 1 | 2 | 0 | 3;
+  getNumSh(): 0 | 1 | 2 | 3 | 4;
   /** Current retained bytes for encoded Splat, sort-center, and SH arrays. */
   getByteLength(): number;
   /** @internal Consume owned arrays for transfer to a streaming worker. */

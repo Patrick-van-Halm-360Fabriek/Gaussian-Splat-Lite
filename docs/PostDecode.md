@@ -43,9 +43,9 @@ Read these from `splat`:
 | `splat.opacity` | `float` | Opacity as stored in the model, which can be above 1 |
 | `splat.alpha` | `float` | Opacity from 0 (transparent) to 1 (opaque) |
 | `splat.color` | `vec3` | RGB color |
-| `splat.sh.coefficient(index)` | `vec3` | One of the 15 view-dependent color coefficients |
+| `splat.sh.coefficient(index)` | `vec3` | One of the 24 view-dependent color coefficients (indices 0–23, SH1–SH4) |
 
-`splat.sh.map((coefficient, { degree }) => ...)` builds a calculation for all 15 coefficients at once. Only the ones the model has are updated.
+`splat.sh.map((coefficient, { degree }) => ...)` builds a calculation for all 24 coefficients at once. Only the ones the model has are updated.
 
 ## Returning changes
 

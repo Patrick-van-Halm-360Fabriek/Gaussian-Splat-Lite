@@ -12,10 +12,12 @@ export declare enum SplatFileType {
   RAD = "rad",
 }
 export type SplatExtra = {
-  sh1?: Uint32Array;
-  sh2?: Uint32Array;
-  sh3a?: Uint32Array;
-  sh3b?: Uint32Array;
+  shBlock0?: Uint32Array;
+  shBlock1?: Uint32Array;
+  shBlock2?: Uint32Array;
+  shBlock3?: Uint32Array;
+  shBlock4?: Uint32Array;
+  shBlock5?: Uint32Array;
 };
 /** Morton storage records per cached spatial bounds block. */
 export declare const SPLAT_BOUNDS_BLOCK_SIZE = 256;

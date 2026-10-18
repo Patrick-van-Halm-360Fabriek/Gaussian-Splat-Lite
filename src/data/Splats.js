@@ -13,7 +13,6 @@ import {
 } from "./splatData.js";
 import { getTextureSize } from "./textureLayout.js";
 import { decodeSplat } from "./unpack.js";
-const SH_COUNTS = [0, 3, 8, 15];
 function validateInitializationInputs(options) {
   if ("splatArrays" in options)
     throw new Error(
@@ -305,10 +304,12 @@ export class Splats {
     uniforms.sourceIndices.value = Splats.emptyTexture;
     uniforms.sourceSplats.value = splats;
     uniforms.sourceSplats2.value = splats2;
-    uniforms.sh1Texture.value = sh.sh1 ?? Splats.emptyTexture;
-    uniforms.sh2Texture.value = sh.sh2 ?? Splats.emptyTexture;
-    uniforms.sh3TextureA.value = sh.sh3a ?? Splats.emptyTexture;
-    uniforms.sh3TextureB.value = sh.sh3b ?? Splats.emptyTexture;
+    uniforms.shBlock0Texture.value = sh.shBlock0 ?? Splats.emptyTexture;
+    uniforms.shBlock1Texture.value = sh.shBlock1 ?? Splats.emptyTexture;
+    uniforms.shBlock2Texture.value = sh.shBlock2 ?? Splats.emptyTexture;
+    uniforms.shBlock3Texture.value = sh.shBlock3 ?? Splats.emptyTexture;
+    uniforms.shBlock4Texture.value = sh.shBlock4 ?? Splats.emptyTexture;
+    uniforms.shBlock5Texture.value = sh.shBlock5 ?? Splats.emptyTexture;
     this.needsUpdate = false;
   }
   getSplatTextures() {
@@ -372,7 +373,7 @@ function newUintArrayTexture(data, width, height, depth) {
   return texture;
 }
 function decodeSplatSh(extra, index, degree) {
-  const count = SH_COUNTS[degree];
+  const count = degree * (degree + 2);
   const result = new Array(count);
   const rgb = [0, 0, 0];
   const base = index * 4;

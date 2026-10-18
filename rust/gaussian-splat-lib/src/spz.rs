@@ -212,7 +212,7 @@ impl<T: SplatReceiver> SpzDecoder<T> {
 
         self.splats.init_splats(&SplatInit {
             num_splats,
-            max_sh_degree: sh_degree.min(3),
+            max_sh_degree: sh_degree,
         })?;
 
         Ok(())
@@ -543,7 +543,7 @@ impl<T: SplatReceiver> SpzDecoder<T> {
                 Rgb => (3, 3, Scales),
                 Scales => (3, 3, Quats),
                 Quats => (if state.version >= 3 { 4 } else { 3 }, 4, Sh),
-                Sh if state.sh_degree > 0 => (sh_components, sh_components.min(45), Done),
+                Sh if state.sh_degree > 0 => (sh_components, sh_components, Done),
                 Sh | Done => {
                     state.stage = Done;
                     return;
@@ -628,7 +628,7 @@ impl<T: SplatReceiver> SpzDecoder<T> {
                     let lookup = &*SH_LOOKUP;
                     let mut offset = 0;
                     for (band, coefficients) in
-                        [3, 5, 7].into_iter().enumerate().take(state.sh_degree)
+                        [3, 5, 7, 9].into_iter().enumerate().take(state.sh_degree)
                     {
                         self.splats.set_sh_packed(base, chunk, band + 1, |i, k| {
                             let start = i * sh_components + offset + k * 3;
@@ -1056,6 +1056,7 @@ mod tests {
         sh1: Vec<f32>,
         sh2: Vec<f32>,
         sh3: Vec<f32>,
+        sh4: Vec<f32>,
         finished: bool,
     }
 
@@ -1103,6 +1104,10 @@ mod tests {
 
         fn set_sh3(&mut self, base: usize, count: usize, sh3: &[f32]) {
             copy_splat_values(&mut self.sh3, base, count, 21, sh3);
+        }
+
+        fn set_sh4(&mut self, base: usize, count: usize, sh4: &[f32]) {
+            copy_splat_values(&mut self.sh4, base, count, 27, sh4);
         }
     }
 
@@ -1739,7 +1744,7 @@ mod tests {
                 let file = spz_file_from_attributes(version, count, degree as u8, &attributes);
                 for chunk_size in [1, 7, file.len()] {
                     let splats = decode_in_chunks(&file, chunk_size).unwrap();
-                    assert_eq!(splats.max_sh_degree, degree.min(3));
+                    assert_eq!(splats.max_sh_degree, degree);
                     assert_eq!(
                         splats.centers,
                         (-6..6).map(|v| v as f32).collect::<Vec<_>>()
@@ -1754,9 +1759,9 @@ mod tests {
                         assert_eq!(&splats.rgb[point * 3..point * 3 + 3], &[color; 3]);
                     }
                     let mut offset = 0;
-                    for (band, width) in [&splats.sh1, &splats.sh2, &splats.sh3]
+                    for (band, width) in [&splats.sh1, &splats.sh2, &splats.sh3, &splats.sh4]
                         .into_iter()
-                        .zip([9, 15, 21])
+                        .zip([9, 15, 21, 27])
                         .take(degree)
                     {
                         assert_eq!(band.len(), count * width);
@@ -1783,7 +1788,7 @@ mod tests {
     }
 
     #[test]
-    fn skips_sh4_across_splat_chunks_in_all_spz_versions() {
+    fn retains_sh4_across_splat_chunks_in_all_spz_versions() {
         let count = MAX_SPLAT_CHUNK + 1;
         for version in 1..=4 {
             let widths = [
@@ -1797,8 +1802,21 @@ mod tests {
             let mut attributes: Vec<Vec<u8>> = widths.iter().map(|w| vec![0; count * w]).collect();
             attributes[5] = (0..count * 72).map(|i| i as u8).collect();
             let file = spz_file_from_attributes(version, count, 4, &attributes);
-            let actual = decode_in_chunks(&file, 4093).unwrap();
-            // A degree-4 file must match the same model with SH4 removed.
+            let mut actual = decode_in_chunks(&file, 4093).unwrap();
+            assert_eq!(actual.max_sh_degree, 4);
+            let expected: Vec<f32> = attributes[5]
+                .chunks_exact(72)
+                .flat_map(|sh| sh[45..].chunks_exact(3))
+                .flat_map(|rgb| {
+                    decode_splat_sh_rgb(encode_splat_sh_rgb(array::from_fn(|d| {
+                        (rgb[d] as f32 - 128.0) / 128.0
+                    })))
+                })
+                .collect();
+            assert_eq!(actual.sh4, expected);
+            // Lower bands must still match the same model with SH4 removed.
+            actual.sh4.clear();
+            actual.max_sh_degree = 3;
             attributes[5] = attributes[5]
                 .chunks_exact(72)
                 .flat_map(|sh| sh[..45].iter().copied())
@@ -1809,14 +1827,14 @@ mod tests {
     }
 
     #[test]
-    fn requires_complete_sh4_payload_even_when_discarded() {
+    fn requires_complete_sh4_payload() {
         for version in [3, 4] {
             for sh_size in [45, 71] {
                 let attributes: Vec<Vec<u8>> = [9, 1, 3, 3, 4, sh_size]
                     .into_iter()
                     .map(|size| vec![0; size])
                     .collect();
-                // Compression is complete and valid; only the discarded SH4 data is missing.
+                // Compression is complete and valid; only the SH4 data is missing.
                 let file = spz_file_from_attributes(version, 1, 4, &attributes);
                 assert!(decode_in_chunks(&file, 7).is_err());
             }

@@ -31,14 +31,14 @@ class SplatPostDecodeShValue {
       index < 0 ||
       index >= SH_COEFFICIENT_COUNT
     ) {
-      throw new Error("SH coefficient index must be between 0 and 14");
+      throw new Error("SH coefficient index must be between 0 and 23");
     }
     return this.owner.inputField("vec3", InputField.Sh0 + index);
   }
   map(transform) {
     const coefficients = [];
     let index = 0;
-    for (let degree = 1; degree <= 3; degree += 1) {
+    for (let degree = 1; degree <= 4; degree += 1) {
       for (let order = -degree; order <= degree; order += 1) {
         coefficients.push(
           this.owner.coerce(

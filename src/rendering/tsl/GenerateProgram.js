@@ -114,10 +114,12 @@ export function createGenerateProgram({ uniforms }) {
   const sourceIndexed = bindUniform("sourceIndexed", "bool");
   const sourceIndices = bindTexture("sourceIndices");
   const numSh = bindUniform("numSh", "int");
-  const sh1Texture = bindTexture("sh1Texture");
-  const sh2Texture = bindTexture("sh2Texture");
-  const sh3TextureA = bindTexture("sh3TextureA");
-  const sh3TextureB = bindTexture("sh3TextureB");
+  const shBlock0Texture = bindTexture("shBlock0Texture");
+  const shBlock1Texture = bindTexture("shBlock1Texture");
+  const shBlock2Texture = bindTexture("shBlock2Texture");
+  const shBlock3Texture = bindTexture("shBlock3Texture");
+  const shBlock4Texture = bindTexture("shBlock4Texture");
+  const shBlock5Texture = bindTexture("shBlock5Texture");
   const objectBasis = bindUniform("objectBasis", "mat3");
   const objectOffset = bindUniform("objectOffset", "vec3");
   const objectLnScale = bindUniform("objectLnScale", "vec3");
@@ -202,26 +204,68 @@ export function createGenerateProgram({ uniforms }) {
         ),
       );
   });
+  const evaluateSH4 = N.Fn(([previous, first, second, direction]) => {
+    const xx = direction.x.mul(direction.x);
+    const yy = direction.y.mul(direction.y);
+    const zz = direction.z.mul(direction.z);
+    const xy = direction.x.mul(direction.y);
+    const yz = direction.y.mul(direction.z);
+    const xz = direction.x.mul(direction.z);
+    return decodeShRgb(previous)
+      .mul(xy.mul(xx.sub(yy)).mul(2.50334294))
+      .add(decodeShRgb(first.x).mul(yz.mul(xx.mul(3).sub(yy)).mul(-1.77013077)))
+      .add(decodeShRgb(first.y).mul(xy.mul(zz.mul(7).sub(1)).mul(0.9461747)))
+      .add(decodeShRgb(first.z).mul(yz.mul(zz.mul(7).sub(3)).mul(-0.66904654)))
+      .add(
+        decodeShRgb(first.w).mul(
+          zz.mul(zz.mul(35).sub(30)).add(3).mul(0.10578555),
+        ),
+      )
+      .add(decodeShRgb(second.x).mul(xz.mul(zz.mul(7).sub(3)).mul(-0.66904654)))
+      .add(
+        decodeShRgb(second.y).mul(
+          xx.sub(yy).mul(zz.mul(7).sub(1)).mul(0.47308735),
+        ),
+      )
+      .add(
+        decodeShRgb(second.z).mul(xz.mul(xx.sub(yy.mul(3))).mul(-1.77013077)),
+      )
+      .add(
+        decodeShRgb(second.w).mul(
+          xx
+            .mul(xx.sub(yy.mul(3)))
+            .sub(yy.mul(xx.mul(3).sub(yy)))
+            .mul(0.62583574),
+        ),
+      );
+  });
   const evaluateSH = N.Fn(([coord, direction]) => {
     const result = N.vec3(0).toVar();
     N.If(numSh.equal(N.int(1)), () => {
-      result.assign(evaluateSH1(loadArray(sh1Texture, coord), direction));
+      result.assign(evaluateSH1(loadArray(shBlock0Texture, coord), direction));
     }).ElseIf(numSh.greaterThanEqual(N.int(2)), () => {
       result.assign(
         evaluateSH12(
-          loadArray(sh1Texture, coord),
-          loadArray(sh2Texture, coord),
+          loadArray(shBlock0Texture, coord),
+          loadArray(shBlock1Texture, coord),
           direction,
         ),
       );
       N.If(numSh.greaterThanEqual(N.int(3)), () => {
+        const shBlock3 = loadArray(shBlock3Texture, coord).toVar();
         result.addAssign(
-          evaluateSH3(
-            loadArray(sh3TextureA, coord),
-            loadArray(sh3TextureB, coord),
-            direction,
-          ),
+          evaluateSH3(loadArray(shBlock2Texture, coord), shBlock3, direction),
         );
+        N.If(numSh.greaterThanEqual(N.int(4)), () => {
+          result.addAssign(
+            evaluateSH4(
+              shBlock3.w,
+              loadArray(shBlock4Texture, coord),
+              loadArray(shBlock5Texture, coord),
+              direction,
+            ),
+          );
+        });
       });
     });
     return result;

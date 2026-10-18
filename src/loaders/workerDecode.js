@@ -231,10 +231,12 @@ export async function decodeSplats(args, { sendStatus }) {
     sortCenters: decoded.sortCenters,
     sourceIds: decoded.sourceIds,
     extra: {
-      sh1: decoded.sh1,
-      sh2: decoded.sh2,
-      sh3a: decoded.sh3a,
-      sh3b: decoded.sh3b,
+      shBlock0: decoded.shBlock0,
+      shBlock1: decoded.shBlock1,
+      shBlock2: decoded.shBlock2,
+      shBlock3: decoded.shBlock3,
+      shBlock4: decoded.shBlock4,
+      shBlock5: decoded.shBlock5,
     },
   };
 }

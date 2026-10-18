@@ -17,10 +17,12 @@ pub struct SplatsData {
     pub max_sh_degree: usize,
     pub splat_arrays: [Uint32Array; 2],
     pub sort_centers: Float32Array,
-    pub sh1: Option<Uint32Array>,
-    pub sh2: Option<Uint32Array>,
-    pub sh3a: Option<Uint32Array>,
-    pub sh3b: Option<Uint32Array>,
+    pub sh_block0: Option<Uint32Array>,
+    pub sh_block1: Option<Uint32Array>,
+    pub sh_block2: Option<Uint32Array>,
+    pub sh_block3: Option<Uint32Array>,
+    pub sh_block4: Option<Uint32Array>,
+    pub sh_block5: Option<Uint32Array>,
     buffer_a: Vec<u32>,
     buffer_b: Vec<u32>,
     buffer_base: usize,
@@ -39,10 +41,12 @@ impl SplatsData {
                 Uint32Array::new_with_length(0),
             ],
             sort_centers: Float32Array::new_with_length(0),
-            sh1: None,
-            sh2: None,
-            sh3a: None,
-            sh3b: None,
+            sh_block0: None,
+            sh_block1: None,
+            sh_block2: None,
+            sh_block3: None,
+            sh_block4: None,
+            sh_block5: None,
             buffer_a: Vec::new(),
             buffer_b: Vec::new(),
             buffer_base: 0,
@@ -89,17 +93,53 @@ impl SplatsData {
             &JsValue::from(self.sort_centers.clone()),
         )
         .unwrap();
-        if let Some(sh1) = self.sh1.as_ref() {
-            Reflect::set(&object, &JsValue::from_str("sh1"), &JsValue::from(sh1)).unwrap();
+        if let Some(sh_block0) = self.sh_block0.as_ref() {
+            Reflect::set(
+                &object,
+                &JsValue::from_str("shBlock0"),
+                &JsValue::from(sh_block0),
+            )
+            .unwrap();
         }
-        if let Some(sh2) = self.sh2.as_ref() {
-            Reflect::set(&object, &JsValue::from_str("sh2"), &JsValue::from(sh2)).unwrap();
+        if let Some(sh_block1) = self.sh_block1.as_ref() {
+            Reflect::set(
+                &object,
+                &JsValue::from_str("shBlock1"),
+                &JsValue::from(sh_block1),
+            )
+            .unwrap();
         }
-        if let Some(sh3a) = self.sh3a.as_ref() {
-            Reflect::set(&object, &JsValue::from_str("sh3a"), &JsValue::from(sh3a)).unwrap();
+        if let Some(sh_block2) = self.sh_block2.as_ref() {
+            Reflect::set(
+                &object,
+                &JsValue::from_str("shBlock2"),
+                &JsValue::from(sh_block2),
+            )
+            .unwrap();
         }
-        if let Some(sh3b) = self.sh3b.as_ref() {
-            Reflect::set(&object, &JsValue::from_str("sh3b"), &JsValue::from(sh3b)).unwrap();
+        if let Some(sh_block3) = self.sh_block3.as_ref() {
+            Reflect::set(
+                &object,
+                &JsValue::from_str("shBlock3"),
+                &JsValue::from(sh_block3),
+            )
+            .unwrap();
+        }
+        if let Some(sh_block4) = self.sh_block4.as_ref() {
+            Reflect::set(
+                &object,
+                &JsValue::from_str("shBlock4"),
+                &JsValue::from(sh_block4),
+            )
+            .unwrap();
+        }
+        if let Some(sh_block5) = self.sh_block5.as_ref() {
+            Reflect::set(
+                &object,
+                &JsValue::from_str("shBlock5"),
+                &JsValue::from(sh_block5),
+            )
+            .unwrap();
         }
         object
     }
@@ -263,7 +303,7 @@ impl SplatsData {
                 self.set_quat(base, count, batch.quat);
             }
         }
-        self.set_sh(base, count, batch.sh1, batch.sh2, batch.sh3);
+        self.set_sh(base, count, batch.sh1, batch.sh2, batch.sh3, batch.sh4);
     }
 }
 
@@ -287,22 +327,32 @@ impl SplatReceiver for SplatsData {
         self.splat_arrays[1] = Uint32Array::new_with_length((max_splats * 4) as u32);
         self.sort_centers = Float32Array::new_with_length((max_splats * 3) as u32);
 
-        self.sh1 = if init.max_sh_degree < 1 {
+        self.sh_block0 = if init.max_sh_degree < 1 {
             None
         } else {
             Some(Uint32Array::new_with_length((max_splats * 4) as u32))
         };
-        self.sh2 = if init.max_sh_degree < 2 {
+        self.sh_block1 = if init.max_sh_degree < 2 {
             None
         } else {
             Some(Uint32Array::new_with_length((max_splats * 4) as u32))
         };
-        self.sh3a = if init.max_sh_degree < 3 {
+        self.sh_block2 = if init.max_sh_degree < 3 {
             None
         } else {
             Some(Uint32Array::new_with_length((max_splats * 4) as u32))
         };
-        self.sh3b = if init.max_sh_degree < 3 {
+        self.sh_block3 = if init.max_sh_degree < 3 {
+            None
+        } else {
+            Some(Uint32Array::new_with_length((max_splats * 4) as u32))
+        };
+        self.sh_block4 = if init.max_sh_degree < 4 {
+            None
+        } else {
+            Some(Uint32Array::new_with_length((max_splats * 4) as u32))
+        };
+        self.sh_block5 = if init.max_sh_degree < 4 {
             None
         } else {
             Some(Uint32Array::new_with_length((max_splats * 4) as u32))
@@ -487,10 +537,18 @@ impl SplatReceiver for SplatsData {
         }
         self.invalidate_buffers();
         self.ensure_buffer_a(count);
-        // SH1 and SH2 share the first four-word block; SH3 uses two more blocks.
-        let offsets = [0, 3, 8, 15];
+        // Coefficients are consecutive across blocks: SH2 starts at sh_block0.w,
+        // SH4 at sh_block3.w. Partial writes must preserve the other band's words.
+        let offsets = [0, 3, 8, 15, 24];
         let (start, end) = (offsets[band - 1], offsets[band]);
-        let outputs = [&self.sh1, &self.sh2, &self.sh3a, &self.sh3b];
+        let outputs = [
+            &self.sh_block0,
+            &self.sh_block1,
+            &self.sh_block2,
+            &self.sh_block3,
+            &self.sh_block4,
+            &self.sh_block5,
+        ];
         for (block, output) in outputs
             .iter()
             .enumerate()
@@ -504,7 +562,9 @@ impl SplatReceiver for SplatsData {
             let last = end.min(block * 4 + 4);
             let target = output.subarray((base * 4) as u32, ((base + count) * 4) as u32);
             if last - first < 4 {
-                if block == 0 && self.sh2.is_some() {
+                if (block == 0 && self.sh_block1.is_some())
+                    || (block == 3 && self.sh_block4.is_some())
+                {
                     target.copy_to(&mut self.buffer_a);
                 } else {
                     self.buffer_a.fill(0);
@@ -529,11 +589,18 @@ impl SplatReceiver for SplatsData {
     ) {
         self.invalidate_buffers();
         self.ensure_buffer_a(count);
-        let stride = [0, 4, 8, 16][degree];
-        for (block, output) in [&self.sh1, &self.sh2, &self.sh3a, &self.sh3b]
-            .into_iter()
-            .enumerate()
-            .take(stride / 4)
+        let stride = [0, 4, 8, 16, 24][degree];
+        for (block, output) in [
+            &self.sh_block0,
+            &self.sh_block1,
+            &self.sh_block2,
+            &self.sh_block3,
+            &self.sh_block4,
+            &self.sh_block5,
+        ]
+        .into_iter()
+        .enumerate()
+        .take(stride / 4)
         {
             let Some(output) = output else { continue };
             for (i, &label) in labels.iter().take(count).enumerate() {
@@ -546,7 +613,15 @@ impl SplatReceiver for SplatsData {
         }
     }
 
-    fn set_sh(&mut self, base: usize, count: usize, sh1: &[f32], sh2: &[f32], sh3: &[f32]) {
+    fn set_sh(
+        &mut self,
+        base: usize,
+        count: usize,
+        sh1: &[f32],
+        sh2: &[f32],
+        sh3: &[f32],
+        sh4: &[f32],
+    ) {
         if !sh1.is_empty() {
             self.set_sh1(base, count, sh1);
         }
@@ -556,16 +631,19 @@ impl SplatReceiver for SplatsData {
         if !sh3.is_empty() {
             self.set_sh3(base, count, sh3);
         }
+        if !sh4.is_empty() {
+            self.set_sh4(base, count, sh4);
+        }
     }
 
     fn set_sh1(&mut self, base: usize, count: usize, sh1: &[f32]) {
         self.invalidate_buffers();
         self.ensure_buffer_a(count);
-        if let Some(packed_sh1) = self.sh1.as_ref() {
+        if let Some(sh_block0) = self.sh_block0.as_ref() {
             let buffer = &mut self.buffer_a[0..count * 4];
-            if self.sh2.is_some() {
+            if self.sh_block1.is_some() {
                 // The fourth word belongs to SH2 and must survive SH1 updates.
-                packed_sh1
+                sh_block0
                     .subarray((base * 4) as u32, ((base + count) * 4) as u32)
                     .copy_to(buffer);
             } else {
@@ -578,7 +656,7 @@ impl SplatReceiver for SplatsData {
                     buffer[i4 + k] = encode_splat_sh_rgb([sh1[k3], sh1[k3 + 1], sh1[k3 + 2]]);
                 }
             }
-            packed_sh1
+            sh_block0
                 .subarray((base * 4) as u32, ((base + count) * 4) as u32)
                 .copy_from(buffer);
         }
@@ -587,11 +665,11 @@ impl SplatReceiver for SplatsData {
     fn set_sh2(&mut self, base: usize, count: usize, sh2: &[f32]) {
         self.invalidate_buffers();
         self.ensure_buffers(count);
-        if let Some(packed_sh1) = self.sh1.as_ref() {
-            if let Some(packed_sh2) = self.sh2.as_ref() {
+        if let Some(sh_block0) = self.sh_block0.as_ref() {
+            if let Some(sh_block1) = self.sh_block1.as_ref() {
                 let buffer_a = &mut self.buffer_a[0..count * 4];
                 let buffer_b = &mut self.buffer_b[0..count * 4];
-                packed_sh1
+                sh_block0
                     .subarray((base * 4) as u32, ((base + count) * 4) as u32)
                     .copy_to(buffer_a);
                 for i in 0..count {
@@ -604,10 +682,10 @@ impl SplatReceiver for SplatsData {
                             encode_splat_sh_rgb([sh2[k3], sh2[k3 + 1], sh2[k3 + 2]]);
                     }
                 }
-                packed_sh1
+                sh_block0
                     .subarray((base * 4) as u32, ((base + count) * 4) as u32)
                     .copy_from(&self.buffer_a);
-                packed_sh2
+                sh_block1
                     .subarray((base * 4) as u32, ((base + count) * 4) as u32)
                     .copy_from(&self.buffer_b);
             }
@@ -617,10 +695,20 @@ impl SplatReceiver for SplatsData {
     fn set_sh3(&mut self, base: usize, count: usize, sh3: &[f32]) {
         self.invalidate_buffers();
         self.ensure_buffers(count);
-        if let Some(packed_sh3a) = self.sh3a.as_ref() {
-            if let Some(packed_sh3b) = self.sh3b.as_ref() {
+        if let Some(sh_block2) = self.sh_block2.as_ref() {
+            if let Some(sh_block3) = self.sh_block3.as_ref() {
                 let buffer_a = &mut self.buffer_a[0..count * 4];
                 let buffer_b = &mut self.buffer_b[0..count * 4];
+                // The fourth word belongs to SH4 and must survive SH3 updates.
+                if self.sh_block4.is_some() {
+                    sh_block3
+                        .subarray((base * 4) as u32, ((base + count) * 4) as u32)
+                        .copy_to(buffer_b);
+                } else {
+                    for words in buffer_b.chunks_exact_mut(4) {
+                        words[3] = 0;
+                    }
+                }
                 for i in 0..count {
                     let [i4, i7] = [i * 4, i * 7];
                     for k in 0..4 {
@@ -632,15 +720,21 @@ impl SplatReceiver for SplatsData {
                         buffer_b[i4 + (k - 4)] =
                             encode_splat_sh_rgb([sh3[k3], sh3[k3 + 1], sh3[k3 + 2]]);
                     }
-                    buffer_b[i4 + 3] = 0;
                 }
-                packed_sh3a
+                sh_block2
                     .subarray((base * 4) as u32, ((base + count) * 4) as u32)
                     .copy_from(&self.buffer_a);
-                packed_sh3b
+                sh_block3
                     .subarray((base * 4) as u32, ((base + count) * 4) as u32)
                     .copy_from(&self.buffer_b);
             }
         }
+    }
+
+    fn set_sh4(&mut self, base: usize, count: usize, sh4: &[f32]) {
+        self.set_sh_packed(base, count, 4, |i, k| {
+            let offset = (i * 9 + k) * 3;
+            encode_splat_sh_rgb([sh4[offset], sh4[offset + 1], sh4[offset + 2]])
+        });
     }
 }

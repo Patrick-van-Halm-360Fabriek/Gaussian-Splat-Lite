@@ -59,7 +59,7 @@ Choose at most one of `url`, `file`, `fileBytes`, or `splats`; combining them th
 | `numSplats` | `number` | Current Splat count |
 | `recolor` | `THREE.Color(1, 1, 1)` | Color multiplier for the whole model |
 | `opacity` | `1` | Opacity multiplier for the whole model |
-| `maxSh` | `3` | Limit view-dependent color detail; `0` uses the base color only |
+| `maxSh` | `4` | Limit view-dependent color detail to SH0–SH4; `0` uses the base color only |
 | `edits` | `SplatEdit[] \| null` | Explicit list of [edits](SplatEdit.md) for this mesh |
 | `splats` | `Splats \| undefined` | The model's [Splats](Splats.md) data |
 | `needsUpdate` | `boolean` setter | Set to `true` to force a refresh |

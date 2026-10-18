@@ -49,7 +49,7 @@ Calling `initialize()` again or `dispose()` cancels a load still in progress; it
 ## Data rules
 
 - **Indices are not file order.** Splats are reordered while loading. Use `getSourceIndex(index)`, or a picking hit's `sourceIndex`, to get the ID from the original file. Passing existing `Splats` to a mesh keeps their order.
-- **Reads return copies.** `getSplat()` returns new `center`, `scales`, `quaternion`, `opacity`, `color`, and `sh` values on each call; changing them does not change the model. `sh` holds 0, 3, 8, or 15 RGB coefficients, depending on the model's degree.
+- **Reads return copies.** `getSplat()` returns new `center`, `scales`, `quaternion`, `opacity`, `color`, and `sh` values on each call; changing them does not change the model. `sh` holds 0, 3, 8, 15, or 24 RGB coefficients, depending on the model's degree (SH0–SH4).
 - **`forEachSplat()` reuses its objects.** The same objects are passed for every Splat, so clone anything you want to keep after the callback returns.
 - **Streamed data is read-only.** Data from [RadStreamScheduler](RadStreamScheduler.md) or [SogStreamScheduler](SogStreamScheduler.md) cannot be reinitialized.
 - **Bounds live on the mesh.** Use [`mesh.getBoundingBox()`](SplatMesh.md#bounding-box).

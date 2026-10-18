@@ -22,10 +22,12 @@ uniform bool sourceIndexed;
 uniform usampler2DArray sourceIndices;
 
 uniform int numSh;
-uniform usampler2DArray sh1Texture;
-uniform usampler2DArray sh2Texture;
-uniform usampler2DArray sh3TextureA;
-uniform usampler2DArray sh3TextureB;
+uniform usampler2DArray shBlock0Texture;
+uniform usampler2DArray shBlock1Texture;
+uniform usampler2DArray shBlock2Texture;
+uniform usampler2DArray shBlock3Texture;
+uniform usampler2DArray shBlock4Texture;
+uniform usampler2DArray shBlock5Texture;
 
 uniform mat3 objectBasis;
 uniform vec3 objectOffset;
@@ -93,22 +95,49 @@ vec3 evaluateSH3(uvec4 first, uvec4 second, vec3 direction) {
         + decodeSplatShRgb(second.z) * (-0.5900436 * direction.x * (xx - 3.0 * yy));
 }
 
+vec3 evaluateSH4(uint previous, uvec4 first, uvec4 second, vec3 direction) {
+    float xx = direction.x * direction.x;
+    float yy = direction.y * direction.y;
+    float zz = direction.z * direction.z;
+    float xy = direction.x * direction.y;
+    float yz = direction.y * direction.z;
+    float xz = direction.x * direction.z;
+    return decodeSplatShRgb(previous) * (2.50334294 * xy * (xx - yy))
+        + decodeSplatShRgb(first.x) * (-1.77013077 * yz * (3.0 * xx - yy))
+        + decodeSplatShRgb(first.y) * (0.94617470 * xy * (7.0 * zz - 1.0))
+        + decodeSplatShRgb(first.z) * (-0.66904654 * yz * (7.0 * zz - 3.0))
+        + decodeSplatShRgb(first.w) * (0.10578555 * (zz * (35.0 * zz - 30.0) + 3.0))
+        + decodeSplatShRgb(second.x) * (-0.66904654 * xz * (7.0 * zz - 3.0))
+        + decodeSplatShRgb(second.y) * (0.47308735 * (xx - yy) * (7.0 * zz - 1.0))
+        + decodeSplatShRgb(second.z) * (-1.77013077 * xz * (xx - 3.0 * yy))
+        + decodeSplatShRgb(second.w) * (0.62583574 * (xx * (xx - 3.0 * yy) - yy * (3.0 * xx - yy)));
+}
+
 vec3 evaluateSH(ivec3 coord, vec3 direction) {
     vec3 result = vec3(0.0);
     if (numSh == 1) {
-        result = evaluateSH1(texelFetch(sh1Texture, coord, 0), direction);
+        result = evaluateSH1(texelFetch(shBlock0Texture, coord, 0), direction);
     } else if (numSh >= 2) {
         result = evaluateSH12(
-            texelFetch(sh1Texture, coord, 0),
-            texelFetch(sh2Texture, coord, 0),
+            texelFetch(shBlock0Texture, coord, 0),
+            texelFetch(shBlock1Texture, coord, 0),
             direction
         );
         if (numSh >= 3) {
+            uvec4 shBlock3 = texelFetch(shBlock3Texture, coord, 0);
             result += evaluateSH3(
-                texelFetch(sh3TextureA, coord, 0),
-                texelFetch(sh3TextureB, coord, 0),
+                texelFetch(shBlock2Texture, coord, 0),
+                shBlock3,
                 direction
             );
+            if (numSh >= 4) {
+                result += evaluateSH4(
+                    shBlock3.w,
+                    texelFetch(shBlock4Texture, coord, 0),
+                    texelFetch(shBlock5Texture, coord, 0),
+                    direction
+                );
+            }
         }
     }
     return result;

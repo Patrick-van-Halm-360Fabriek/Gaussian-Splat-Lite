@@ -295,6 +295,10 @@ const renderOptionActions = {
   renderOnDemand: (value) => {
     renderOnDemand = value;
   },
+  maxSh: (value) => {
+    if (activeSplat) applyMaxSh(activeSplat, value);
+    taa?.reset();
+  },
   halfFloatBlending: (value) => {
     halfFloatBlending = value;
     if (!value) {
@@ -549,6 +553,12 @@ function syncStreamOptions() {
   );
 }
 
+function applyMaxSh(object, value) {
+  object.traverse((node) => {
+    if (node instanceof SplatMesh) node.maxSh = value;
+  });
+}
+
 function isFileDrag(event) {
   return Array.from(event.dataTransfer?.types ?? []).includes("Files");
 }
@@ -732,6 +742,12 @@ async function loadFile(
     );
     activeSplat = model.splat;
     activeStream = model.stream;
+    applyMaxSh(activeSplat, optionsPanel.getValue("maxSh"));
+    if (activeStream) {
+      activeSplat.addEventListener("childadded", ({ child }) => {
+        applyMaxSh(child, optionsPanel.getValue("maxSh"));
+      });
+    }
     syncStreamResolution();
     syncStreamOptions();
     disposeActiveSource = dispose;

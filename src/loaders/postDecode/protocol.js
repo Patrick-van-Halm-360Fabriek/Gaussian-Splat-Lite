@@ -64,7 +64,7 @@ export const InputField = {
   Sh0: 7,
 };
 /** @internal */
-export const SH_COEFFICIENT_COUNT = 15;
+export const SH_COEFFICIENT_COUNT = 24;
 /** @internal */
 export const TYPE_WIDTHS = {
   float: 1,

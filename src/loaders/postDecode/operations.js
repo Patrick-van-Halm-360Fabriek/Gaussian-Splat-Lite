@@ -3,6 +3,7 @@ import {
   decodeShRgbToArray,
   decodeSplatOpacity,
 } from "../../data/splatCodec.js";
+import { SH_KEYS, getSplatShDegree } from "../../data/splatData.js";
 import { fromHalf } from "../../utils/numeric.js";
 import {
   ATTRIBUTE_FORMAT_BYTES,
@@ -106,12 +107,9 @@ function readAttributeBlock(
   }
 }
 export function shWord(data, coefficient) {
-  if (coefficient <= 2 && data.sh1) return [data.sh1, coefficient];
-  if (coefficient === 3 && data.sh1 && data.sh2) return [data.sh1, 3];
-  if (coefficient <= 7 && data.sh2) return [data.sh2, coefficient - 4];
-  if (coefficient <= 11 && data.sh3a) return [data.sh3a, coefficient - 8];
-  if (coefficient <= 14 && data.sh3b) return [data.sh3b, coefficient - 12];
-  return undefined;
+  const degree = getSplatShDegree(data);
+  if (coefficient >= degree * (degree + 2)) return undefined;
+  return [data[SH_KEYS[coefficient >> 2]], coefficient & 3];
 }
 function evaluateInputFieldBlock(
   field,

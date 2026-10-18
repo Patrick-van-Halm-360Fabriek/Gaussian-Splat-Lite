@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added SH4 decoding for PLY and SPZ and rendering on WebGL, WebGPU, and the WebGL2 fallback. `Splats.getSplat()` and `postDecode` now expose all 24 view-dependent RGB coefficients.
+
+### Changed
+
+- Renamed the `SplatExtra` fields `sh1`, `sh2`, `sh3a`, `sh3b`, `sh4a`, and `sh4b` to `shBlock0`–`shBlock5`, respectively. Update direct field access to use the new names.
+- `SplatMesh.maxSh` now defaults to `4`, so SH4 models render their full view-dependent color. Set it to `3` to limit rendering to the previous maximum degree.
+- SH4 SPZ models now use more memory because their full view-dependent color data is retained. `SplatMesh.maxSh` only limits rendering detail and does not reduce memory use.
+
 ## [1.3.1] - 2026-10-17
 
 ### Added

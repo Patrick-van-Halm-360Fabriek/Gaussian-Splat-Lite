@@ -289,7 +289,7 @@ export class IndexedSplats extends Splats {
     if (!includeSh) return splat;
     const rgb = [0, 0, 0];
     const sh = Array.from(
-      { length: [0, 3, 8, 15][this.numSh] },
+      { length: this.numSh * (this.numSh + 2) },
       (_, coefficient) => {
         const word =
           this.sourceArrays[2 + (coefficient >> 2)][
@@ -363,10 +363,18 @@ export class IndexedSplats extends Splats {
     this.ensureIndices();
     uniforms.sourceSplats.value = this.sourceTextures[0];
     uniforms.sourceSplats2.value = this.sourceTextures[1];
-    uniforms.sh1Texture.value = this.sourceTextures[2] ?? Splats.emptyTexture;
-    uniforms.sh2Texture.value = this.sourceTextures[3] ?? Splats.emptyTexture;
-    uniforms.sh3TextureA.value = this.sourceTextures[4] ?? Splats.emptyTexture;
-    uniforms.sh3TextureB.value = this.sourceTextures[5] ?? Splats.emptyTexture;
+    uniforms.shBlock0Texture.value =
+      this.sourceTextures[2] ?? Splats.emptyTexture;
+    uniforms.shBlock1Texture.value =
+      this.sourceTextures[3] ?? Splats.emptyTexture;
+    uniforms.shBlock2Texture.value =
+      this.sourceTextures[4] ?? Splats.emptyTexture;
+    uniforms.shBlock3Texture.value =
+      this.sourceTextures[5] ?? Splats.emptyTexture;
+    uniforms.shBlock4Texture.value =
+      this.sourceTextures[6] ?? Splats.emptyTexture;
+    uniforms.shBlock5Texture.value =
+      this.sourceTextures[7] ?? Splats.emptyTexture;
     uniforms.sourceLayerBits.value = Math.log2(this.layerSize);
     uniforms.sourceLayerMask.value = this.layerSize - 1;
     uniforms.sourceBlockBits.value = this.blockBits;

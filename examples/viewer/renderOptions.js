@@ -172,8 +172,20 @@ export const renderOptionGroups = [
   },
   {
     title: "Splat appearance",
-    description: "Shape, filtering, and screen-space size.",
+    description:
+      "View-dependent color, shape, filtering, and screen-space size.",
     options: [
+      {
+        property: "maxSh",
+        label: "Max SH",
+        description:
+          "Limits view-dependent color detail. 0 uses only base color; lower values reduce rendering work.",
+        min: 0,
+        max: 4,
+        step: 1,
+        defaultValue: 4,
+        format: (value) => `SH${value}`,
+      },
       {
         property: "maxStdDev",
         description:

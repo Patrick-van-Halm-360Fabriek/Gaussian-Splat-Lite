@@ -1,5 +1,14 @@
-export const SH_KEYS = ["sh1", "sh2", "sh3a", "sh3b"];
-export const SH_ARRAY_COUNTS = [0, 1, 2, 4];
+// Each block holds four consecutive RGB coefficients (excluding SH0).
+// Band boundaries can fall inside a block: SH2 starts at shBlock0.w, SH4 at shBlock3.w.
+export const SH_KEYS = [
+  "shBlock0",
+  "shBlock1",
+  "shBlock2",
+  "shBlock3",
+  "shBlock4",
+  "shBlock5",
+];
+export const SH_ARRAY_COUNTS = [0, 1, 2, 4, 6];
 /** Merge cached min XYZ / max XYZ values without decoding records. */
 export function unionSplatBounds(target, source, offset = 0) {
   for (let axis = 0; axis < 3; axis++) {
@@ -12,7 +21,10 @@ export function resetSplatBounds(bounds) {
   bounds.fill(Number.NEGATIVE_INFINITY, 3, 6);
 }
 export function getSplatShDegree(extra) {
-  return !extra.sh1 ? 0 : !extra.sh2 ? 1 : !extra.sh3a || !extra.sh3b ? 2 : 3;
+  if (!extra.shBlock0) return 0;
+  if (!extra.shBlock1) return 1;
+  if (!extra.shBlock2 || !extra.shBlock3) return 2;
+  return !extra.shBlock4 || !extra.shBlock5 ? 3 : 4;
 }
 /** Packed texture storage; capacity includes padding, but excludes sort centers. */
 export function getSplatTextureBytes(capacity, numSh) {
