@@ -190,6 +190,7 @@ export function createProjectionProgram(uniforms, view) {
           const b = p0.dot(p1);
           const d = p1.dot(p1).add(preBlurAmount).toVar();
           const detOrig = a.mul(d).sub(b.mul(b)).toVar();
+          const det = detOrig.toVar();
           N.If(blurAmount.equal(0), () => {
             // No opacity compensation is needed, but reject degenerate covariance.
             N.If(detOrig.greaterThan(0).not(), () => {
@@ -198,7 +199,7 @@ export function createProjectionProgram(uniforms, view) {
           }).Else(() => {
             a.addAssign(blurAmount);
             d.addAssign(blurAmount);
-            const det = a.mul(d).sub(b.mul(b)).toVar();
+            det.assign(a.mul(d).sub(b.mul(b)));
             N.If(det.greaterThan(0), () => {
               alpha.mulAssign(detOrig.div(det).max(0).sqrt());
             }).Else(() => {
@@ -219,10 +220,11 @@ export function createProjectionProgram(uniforms, view) {
               );
             });
             const eigenAverage = a.add(d).mul(0.5).toVar();
-            const eigenDelta = N.vec2(a.sub(d).mul(0.5), b).length().toVar();
+            const halfDiagDiff = a.sub(d).mul(0.5).toVar();
+            const eigenDelta = N.vec2(halfDiagDiff, b).length().toVar();
             const eigen1 = eigenAverage.add(eigenDelta).toVar();
-            // Keep a small positive minor axis when subtraction rounds to zero.
-            const eigen2 = eigenAverage.sub(eigenDelta).max(1e-4).toVar();
+            // Recover the minor axis without subtracting nearly equal eigenvalues.
+            const eigen2 = det.div(eigen1).toVar();
             const supportScale = N.select(
               maximumSupportRadius.greaterThan(0),
               supportRadius.div(maximumSupportRadius),
@@ -284,12 +286,19 @@ export function createProjectionProgram(uniforms, view) {
                   );
                 });
                 // Only surviving splats need an oriented covariance basis.
-                const eigenVector1 = N.vec2(0).toVar();
-                N.If(b.abs().greaterThan(0.001), () => {
-                  eigenVector1.assign(N.vec2(b, eigen1.sub(a)).normalize());
-                }).Else(() => {
+                const eigenVector1Unnorm = N.select(
+                  halfDiagDiff.greaterThanEqual(0),
+                  N.vec2(eigenDelta.add(halfDiagDiff), b),
+                  N.vec2(b, eigenDelta.sub(halfDiagDiff)),
+                ).toVar();
+                const eigenVector1Len2 = eigenVector1Unnorm
+                  .dot(eigenVector1Unnorm)
+                  .toVar();
+                // An isotropic covariance has no preferred direction.
+                const eigenVector1 = N.vec2(1, 0).toVar();
+                N.If(eigenVector1Len2.greaterThan(0), () => {
                   eigenVector1.assign(
-                    N.select(a.greaterThanEqual(d), N.vec2(1, 0), N.vec2(0, 1)),
+                    eigenVector1Unnorm.mul(eigenVector1Len2.inverseSqrt()),
                   );
                 });
                 const eigenVector2 = N.vec2(

@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed incorrect orientation and unstable widths of thin Splats on WebGL, WebGPU, and the WebGL2 fallback.
+
 ## [1.3.2] - 2026-10-18
 
 ### Added

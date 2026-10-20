@@ -222,17 +222,13 @@ void main() {
         supportRadius = wideSupportRadius(alpha, kernelPower, supportRadius);
     }
 
-    // Compute the eigenvalue and eigenvectors of the 2D covariance matrix
+    // Compute the eigenvalues of the 2D covariance matrix.
     float eigenAvg = 0.5 * (a + d);
-    float eigenDelta = length(vec2(0.5 * (a - d), b));
+    float halfDiagDiff = 0.5 * (a - d);
+    float eigenDelta = length(vec2(halfDiagDiff, b));
     float eigen1 = eigenAvg + eigenDelta;
-    // Keep a small positive minor axis when subtraction rounds to zero.
-    float eigen2 = max(eigenAvg - eigenDelta, 1e-4);
-
-    vec2 eigenVec1 = (abs(b) > 0.001)
-        ? normalize(vec2(b, eigen1 - a))
-        : ((a >= d) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
-    vec2 eigenVec2 = vec2(eigenVec1.y, -eigenVec1.x);
+    // Recover the minor axis without subtracting nearly equal eigenvalues.
+    float eigen2 = det / eigen1;
 
     // Limit support to the viewport's short side, then shrink both the quad
     // and its UV extent by the same ratio to preserve the Gaussian profile.
@@ -247,6 +243,18 @@ void main() {
     if (scale1 * supportScale < minProjectedRadius && scale2 * supportScale < minProjectedRadius) {
         return;
     }
+
+    // Only surviving splats need an oriented covariance basis.
+    // Choose the equivalent direction that avoids cancellation near either axis.
+    vec2 eigenVec1Unnorm = (halfDiagDiff >= 0.0)
+        ? vec2(eigenDelta + halfDiagDiff, b)
+        : vec2(b, eigenDelta - halfDiagDiff);
+    float eigenVec1Len2 = dot(eigenVec1Unnorm, eigenVec1Unnorm);
+    // An isotropic covariance has no preferred direction.
+    vec2 eigenVec1 = (eigenVec1Len2 > 0.0)
+        ? eigenVec1Unnorm * inversesqrt(eigenVec1Len2)
+        : vec2(1.0, 0.0);
+    vec2 eigenVec2 = vec2(eigenVec1.y, -eigenVec1.x);
 
     float supportRadiusSquared = supportRadius * supportRadius;
     if (kernelPower != 0.0) {
