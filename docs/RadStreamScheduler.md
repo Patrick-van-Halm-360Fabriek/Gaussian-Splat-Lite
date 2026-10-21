@@ -2,7 +2,9 @@
 
 [Back to documentation](../README.md#documentation)
 
-Shows large RAD scenes by loading only the detail the camera needs, and updating it as the camera moves. It supports RAD version 1 files with levels of detail (LOD), either as a single `.rad` file or split into a header and `.radc` pages. It works on WebGPU and WebGL2, and needs no Spark runtime.
+Shows large RAD scenes by loading only the detail the camera needs, and updating it as the camera moves. It supports RAD version 1 files with levels of detail (LOD), either as a single `.rad` file or split into a header and `.radc` pages. It works on WebGPU and WebGL2.
+
+To convert your own models, see [Building RAD files](BuildRad.md).
 
 ```js
 import { RadStreamScheduler } from "gaussian-splat-lite";

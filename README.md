@@ -175,6 +175,7 @@ const streaming = new SogStreamScheduler({
 
 **Large scenes**
 
+- [Building RAD files](docs/BuildRad.md) — Convert models to streamable RAD with quality LOD.
 - [RadStreamScheduler](docs/RadStreamScheduler.md) — Large RAD scenes with adaptive detail.
 - [SogStreamScheduler](docs/SogStreamScheduler.md) — Large SOG scenes with adaptive detail.
 
@@ -194,7 +195,7 @@ See [Contributing](CONTRIBUTING.md#validation) for validation commands. `npm run
 
 ## Acknowledgements
 
-The overall architecture of Gaussian Splat Lite draws on [Spark](https://github.com/sparkjsdev/spark) and [SuperSplat](https://github.com/playcanvas/supersplat).
+Gaussian Splat Lite uses [Spark](https://github.com/sparkjsdev/spark) and [SuperSplat](https://github.com/playcanvas/supersplat) as reference implementations.
 
 Example model adapted from [shehabmekky](https://superspl.at/scene/c1e6297e) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
 

@@ -9,6 +9,7 @@
     "ignoreUnknown": false,
     "ignore": [
       "dist/**",
+      "bin/decoder/**",
       "site/**",
       "site-dist/**",
       "rust/target/**",

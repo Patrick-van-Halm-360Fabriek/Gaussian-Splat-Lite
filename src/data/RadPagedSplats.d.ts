@@ -1,7 +1,7 @@
 import { IndexedSplats } from "./IndexedSplats.js";
 import type { ReorderedSplatResult } from "./defines.js";
 export type RadPagedSplatsOptions = {
-  /** Maximum records in one decoded chunk. Defaults to Spark's 65,536. */
+  /** Maximum records in one decoded chunk. Defaults to 65,536. */
   pageSize?: number;
   pageCount: number;
   numSh: number;

@@ -1,10 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const wasmPackVersion = "0.15.0";
+const lodOnly = process.argv.includes("--lod");
 const packageDir = fileURLToPath(
   new URL("./gaussian-splat-rs/", import.meta.url),
 );
@@ -71,7 +72,12 @@ try {
   // Build on the system volume: AppleDouble files on external volumes can
   // otherwise be mistaken for WASM modules by wasm-bindgen or wasm-opt.
   buildDir = mkdtempSync(join(tmpdir(), "gaussian-splat-lite-wasm-"));
-  const output = join(buildDir, "pkg");
+  const buildEnv = {
+    ...childEnv,
+    CARGO_TARGET_DIR: join(buildDir, "cargo-target"),
+    RUSTFLAGS: "-C target-feature=+simd128,+bulk-memory",
+  };
+  const decoderOutput = join(buildDir, "decoder");
   run(
     "wasm-pack",
     [
@@ -79,25 +85,47 @@ try {
       "--target",
       "web",
       "--release",
+      "--no-typescript",
+      "--out-name",
+      "decoder",
       "--out-dir",
-      output,
+      decoderOutput,
       "--",
+      "--features",
+      "cli",
       "--locked",
     ],
-    {
-      env: {
-        ...childEnv,
-        CARGO_TARGET_DIR: join(buildDir, "cargo-target"),
-        RUSTFLAGS: "-C target-feature=+simd128,+bulk-memory",
-      },
-    },
+    { env: buildEnv },
   );
-  const destination = join(packageDir, "pkg");
-  rmSync(destination, { recursive: true, force: true });
-  cpSync(output, destination, {
-    recursive: true,
-    filter: (source) => !basename(source).startsWith("._"),
-  });
+  const decoderDestination = new URL("../bin/decoder/", import.meta.url);
+  mkdirSync(decoderDestination, { recursive: true });
+  for (const file of ["decoder.js", "decoder_bg.wasm"]) {
+    cpSync(join(decoderOutput, file), new URL(file, decoderDestination));
+  }
+
+  if (!lodOnly) {
+    const output = join(buildDir, "pkg");
+    run(
+      "wasm-pack",
+      [
+        "build",
+        "--target",
+        "web",
+        "--release",
+        "--out-dir",
+        output,
+        "--",
+        "--locked",
+      ],
+      { env: buildEnv },
+    );
+    const destination = join(packageDir, "pkg");
+    rmSync(destination, { recursive: true, force: true });
+    cpSync(output, destination, {
+      recursive: true,
+      filter: (source) => !basename(source).startsWith("._"),
+    });
+  }
 } catch (error) {
   console.error("Failed to build Rust WASM:", error.message);
   process.exitCode = 1;

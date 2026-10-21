@@ -68,5 +68,6 @@ jobs:
           workspaces: rust
       - run: cargo test --manifest-path rust/Cargo.toml --workspace --locked
       - run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets --features cli --locked -- -D warnings
       - if: matrix.toolchain == 'stable'
         run: cargo fmt --manifest-path rust/Cargo.toml --all -- --check

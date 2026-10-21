@@ -1,0 +1,171 @@
+#!/usr/bin/env node
+
+import path from "node:path";
+import { readInput } from "./rad/input.js";
+import { buildLod } from "./rad/lod.js";
+import { Pool } from "./rad/parallel.js";
+import { checkOutput, writeRad } from "./rad/rad.js";
+import { GIB, Workspace } from "./rad/storage.js";
+
+const help = `Convert PLY or SPZ files to RAD with levels of detail (LOD).
+
+Usage: gsl-build-lod <input> [more inputs...] [options]
+       npm run build-lod -- <input> [more inputs...] [options]
+
+Inputs: PLY, SPZ.
+Output: <input-stem>-lod.rad. Existing files are not overwritten.
+
+Options:
+  --lod-base <base>      LOD spacing (default: 1.75, range: 1.1..16)
+  --max-sh <0..3>        Maximum SH degree (default: 3)
+  --rad-chunked          Write a .rad header and separate .radc files
+  --memory-budget <GiB>  Target memory in GiB (default: 4, minimum: 1)
+  --temp-dir <path>      Temporary file location (default: system temp)
+  -o, --output <path>    Output .rad path (one input only)
+  -h, --help             Show this help
+
+SH4 inputs are accepted; coefficients above --max-sh are discarded.
+The memory target covers the whole conversion, worker threads included.
+No compilation is required.`;
+
+function parse(args) {
+  const options = {
+    inputs: [],
+    lodBase: 1.75,
+    maxSh: 3,
+    budget: 4 * GIB,
+    chunked: false,
+  };
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--help" || arg === "-h") return;
+    if (arg === "--") {
+      options.inputs.push(...args.slice(i + 1));
+      break;
+    }
+    if (arg === "--rad-chunked") {
+      options.chunked = true;
+      continue;
+    }
+    if (!arg.startsWith("-")) {
+      options.inputs.push(arg);
+      continue;
+    }
+    const equal = arg.indexOf("=");
+    const name = equal < 0 ? arg : arg.slice(0, equal);
+    const key = {
+      "--lod-base": "lodBase",
+      "--max-sh": "maxSh",
+      "--memory-budget": "budget",
+      "--temp-dir": "tempDir",
+      "-o": "output",
+      "--output": "output",
+    }[name];
+    if (!key) throw new Error(`Unknown option: ${arg}`);
+    const value = equal < 0 ? args[++i] : arg.slice(equal + 1);
+    if (!value) throw new Error(`${name} requires a value`);
+    options[key] = ["lodBase", "maxSh", "budget"].includes(key)
+      ? Number(value) * (key === "budget" ? GIB : 1)
+      : value;
+  }
+  if (
+    !Number.isFinite(options.lodBase) ||
+    options.lodBase < 1.1 ||
+    options.lodBase > 16
+  )
+    throw new Error("--lod-base must be between 1.1 and 16");
+  if (
+    !Number.isInteger(options.maxSh) ||
+    options.maxSh < 0 ||
+    options.maxSh > 3
+  )
+    throw new Error("--max-sh must be an integer between 0 and 3");
+  if (
+    !Number.isFinite(options.budget) ||
+    options.budget < GIB ||
+    options.budget > Number.MAX_SAFE_INTEGER
+  )
+    throw new Error(
+      "--memory-budget must be a finite GiB number of at least 1 within the platform limit",
+    );
+  if (!options.inputs.length) throw new Error(help);
+  if (options.output && options.inputs.length !== 1)
+    throw new Error("--output requires exactly one input");
+  return options;
+}
+
+async function convert(input, options) {
+  const output =
+    options.output ??
+    path.join(
+      path.dirname(input),
+      `${path.basename(input, path.extname(input))}-lod.rad`,
+    );
+  checkOutput(output, options.chunked);
+  const workspace = new Workspace(options.budget, options.tempDir);
+  const start = performance.now();
+  console.log(
+    `${input} -> ${output}\nMemory target: ${(options.budget / GIB).toFixed(3)} GiB`,
+  );
+  // Worker threads for the LOD, closed before writing starts its own.
+  let pool;
+  try {
+    const splats = await readInput(input, options.maxSh, workspace);
+    const count = splats.length;
+    pool = new Pool(workspace, count);
+    splats.retain(pool);
+    console.log(
+      `Read ${count} splats, SH${splats.inputSh}, in ${((performance.now() - start) / 1000).toFixed(2)}s`,
+    );
+    if (splats.inputSh > splats.maxSh)
+      console.log(
+        `Keeping SH0–SH${splats.maxSh}; higher coefficients are discarded for RAD output.`,
+      );
+    if (splats.invalid)
+      console.log(
+        `Removed ${splats.invalid} splats with NaN or infinite values or a zero rotation`,
+      );
+    const empty = count - splats.invalid - splats.length;
+    if (empty) console.log(`Removed ${empty} empty splats`);
+    if (!splats.length) throw new Error("Input contains no usable splats");
+    const leaves = splats.length;
+    const lodStart = performance.now();
+    buildLod(splats, options.lodBase, pool);
+    await pool.close();
+    console.log(
+      `Built ${splats.length} LOD splats from ${leaves} leaves in ${((performance.now() - lodStart) / 1000).toFixed(2)}s`,
+    );
+    const bytes = await writeRad(
+      splats,
+      output,
+      options.chunked,
+      options.lodBase,
+    );
+    console.log(
+      `Wrote ${(bytes / 1048576).toFixed(2)} MiB in ${((performance.now() - start) / 1000).toFixed(2)}s total`,
+    );
+  } finally {
+    await pool?.close();
+    workspace.dispose();
+  }
+}
+
+try {
+  const options = parse(process.argv.slice(2));
+  if (!options) console.log(help);
+  else {
+    let failed = 0;
+    for (const input of options.inputs) {
+      try {
+        await convert(input, options);
+      } catch (error) {
+        console.error(`${input}: ${error.message ?? error}`);
+        failed++;
+      }
+    }
+    if (failed) throw new Error(`${failed} conversion(s) failed`);
+  }
+} catch (error) {
+  console.error(error.message);
+  process.exitCode = 1;
+}

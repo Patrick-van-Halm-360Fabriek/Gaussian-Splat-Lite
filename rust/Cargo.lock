@@ -89,9 +89,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crc32fast",
+ "flate2",
  "half",
  "image-webp",
- "miniz_oxide 0.8.9",
  "png",
  "ruzstd",
  "serde",

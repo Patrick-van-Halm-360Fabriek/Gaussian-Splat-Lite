@@ -1,7 +1,7 @@
-//! Spark RAD version 1 / RADC decoding (Spark v2.1.0 wire format).
+//! RAD version 1 / RADC decoding.
 //!
-//! Property codecs are adapted from Spark's MIT-licensed `rad.rs`.
-//! Copyright 2025 WORLD LABS TECHNOLOGIES, INC. See THIRD_PARTY_LICENSES.md.
+//! Property codecs adapted from MIT-licensed code. See THIRD_PARTY_LICENSES.md.
+//!
 //! Full decoding validates the complete chunk before publishing output or
 //! changing its codebook cache. Codebook initialization validates the container
 //! and codebooks only, for a root already decoded by another worker.
@@ -10,8 +10,8 @@
 use std::{array, borrow::Cow, collections::HashSet, sync::LazyLock};
 
 use anyhow::{bail, ensure, Context, Result};
+use flate2::{Decompress, FlushDecompress, Status};
 use half::f16;
-use miniz_oxide::inflate::decompress_to_vec_with_limit;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -895,15 +895,19 @@ impl RadDecoder {
             let expected = prop.validate(records)?;
             let encoded = &payload[prop.offset as usize..(prop.offset + prop.bytes) as usize];
             let data: Cow<'_, [u8]> = if prop.compression.is_some() {
-                Cow::Owned(
-                    decompress_to_vec_with_limit(encoded, expected).map_err(|error| {
-                        anyhow::anyhow!(
-                            "RAD {:?} DEFLATE failed: {:?}",
-                            prop.property,
-                            error.status
-                        )
-                    })?,
-                )
+                let mut data = vec![0; expected];
+                let mut decompressor = Decompress::new(false);
+                let status = decompressor
+                    .decompress(encoded, &mut data, FlushDecompress::Finish)
+                    .with_context(|| format!("RAD {:?} DEFLATE failed", prop.property))?;
+                ensure!(
+                    status == Status::StreamEnd,
+                    "RAD {:?} DEFLATE incomplete or exceeds decoded length {}",
+                    prop.property,
+                    expected
+                );
+                data.truncate(decompressor.total_out() as usize);
+                Cow::Owned(data)
             } else {
                 Cow::Borrowed(encoded)
             };
@@ -1334,14 +1338,18 @@ fn decode_oct_axis([u, v]: [u8; 2]) -> [f32; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use miniz_oxide::deflate::compress_to_vec;
+    use flate2::{read::DeflateEncoder, Compression};
     use serde_json::json;
+    use std::io::Read;
 
     fn chunk(base: u32, half: bool, bad_geometry: bool, last_code: f32) -> Vec<u8> {
         let mut payload = Vec::new();
         let mut properties = Vec::new();
         let mut add = |name: &str, encoding: &str, bytes: Vec<u8>| {
-            let compressed = compress_to_vec(&bytes, 6);
+            let mut compressed = Vec::new();
+            DeflateEncoder::new(bytes.as_slice(), Compression::new(6))
+                .read_to_end(&mut compressed)
+                .unwrap();
             properties.push(json!({"property": name, "encoding": encoding,
                 "offset": payload.len(), "bytes": compressed.len(), "compression": "gz"}));
             payload.extend(compressed);
@@ -1402,6 +1410,42 @@ mod tests {
         )
         .unwrap();
         (RadDecoder::new(meta, degree).unwrap(), root, next)
+    }
+
+    fn edit_property(bytes: &[u8], name: &str, edit: impl Fn(&mut Value)) -> Vec<u8> {
+        let length = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+        let mut metadata: Value = serde_json::from_slice(&bytes[8..8 + length]).unwrap();
+        let properties = metadata["properties"].as_array_mut().unwrap();
+        edit(
+            properties
+                .iter_mut()
+                .find(|p| p["property"] == name)
+                .unwrap(),
+        );
+        let metadata = serde_json::to_vec(&metadata).unwrap();
+        let mut edited = RAD_CHUNK_MAGIC.to_le_bytes().to_vec();
+        edited.extend((metadata.len() as u32).to_le_bytes());
+        edited.extend(&metadata);
+        edited.resize(8 + ((metadata.len() + 7) & !7), 0);
+        edited.extend(&bytes[8 + ((length + 7) & !7)..]);
+        edited
+    }
+
+    #[test]
+    fn rejects_deflate_streams_longer_or_shorter_than_the_property() {
+        let (mut decoder, root, _) = fixture(false, false, 0);
+        // As f16, rgb holds 12 bytes; its stream still inflates to 24.
+        let longer = edit_property(&root, "rgb", |p| p["encoding"] = "f16".into());
+        let truncated = edit_property(&root, "rgb", |p| {
+            p["bytes"] = (p["bytes"].as_u64().unwrap() - 1).into()
+        });
+        for bytes in [longer, truncated] {
+            decoder.meta.chunks[0].bytes = bytes.len() as u64;
+            let error = decoder.decode_chunk_data(&bytes, false).err().unwrap();
+            assert!(format!("{error:#}").contains("DEFLATE"), "{error:#}");
+        }
+        decoder.meta.chunks[0].bytes = root.len() as u64;
+        decoder.decode_chunk_data(&root, false).unwrap();
     }
 
     #[test]

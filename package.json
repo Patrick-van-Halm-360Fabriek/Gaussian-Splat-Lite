@@ -8,6 +8,9 @@
   "main": "./dist/gaussian-splat-lite.cjs",
   "module": "./dist/gaussian-splat-lite.module.js",
   "types": "./dist/types/index.d.mts",
+  "bin": {
+    "gsl-build-lod": "./bin/build-lod.js"
+  },
   "exports": {
     ".": {
       "import": {
@@ -27,9 +30,11 @@
     "build:site": "vite build --config vite.site.config.js",
     "build:types": "node scripts/check-declarations.js && node scripts/build-types.js",
     "build:wasm": "node rust/build_wasm.js",
+    "build:wasm:lod": "node rust/build_wasm.js --lod",
+    "build-lod": "node bin/build-lod.js",
     "check": "node scripts/check-js.js && tsc --noEmit && node scripts/check-declarations.js",
     "check:rust": "cargo fmt --manifest-path rust/Cargo.toml --all -- --check",
-    "clean": "rm -rf dist/ node_modules/ rust/target/ rust/gaussian-splat-rs/pkg/",
+    "clean": "rm -rf dist/ bin/decoder/ node_modules/ rust/target/ rust/gaussian-splat-rs/pkg/",
     "dev": "vite --config vite.site.config.js --host",
     "format": "biome format .",
     "format:fix": "biome format . --fix",
@@ -44,6 +49,7 @@
     "test:rust": "cargo test --manifest-path rust/Cargo.toml --workspace --locked"
   },
   "files": [
+    "bin",
     "dist",
     "docs",
     "CHANGELOG.md",

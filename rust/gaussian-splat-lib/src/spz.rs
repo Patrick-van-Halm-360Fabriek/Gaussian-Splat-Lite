@@ -1,14 +1,8 @@
-use miniz_oxide::inflate::core::inflate_flags::{
-    TINFL_FLAG_HAS_MORE_INPUT, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF,
-};
-use miniz_oxide::inflate::core::{decompress, DecompressorOxide};
-use miniz_oxide::inflate::TINFLStatus;
+use flate2::{Decompress, FlushDecompress, Status};
 use std::{array, io::Read, sync::LazyLock};
 
 use crate::{
-    decoder::{
-        parse_gzip_header, ChunkReceiver, QuantizedProperty, ScalarLookup, SplatInit, SplatReceiver,
-    },
+    decoder::{ChunkReceiver, QuantizedProperty, ScalarLookup, SplatInit, SplatReceiver},
     splat_encode::ShLookup,
 };
 
@@ -102,14 +96,9 @@ struct V4StreamDecoder {
 pub struct SpzDecoder<T: SplatReceiver> {
     splats: T,
     format: SpzFormat,
-    decompressor: DecompressorOxide,
+    decompressor: Decompress,
     compressed: Vec<u8>,
     decompressed: Vec<u8>,
-    gzip_header_done: bool,
-    gzip_deflate_done: bool,
-    gzip_crc: crc32fast::Hasher,
-    gzip_size: u32,
-    out_pos: usize,
     raw: Vec<u8>,
     v4_stage: V4Stage,
     expected_input_size: Option<u64>,
@@ -117,6 +106,7 @@ pub struct SpzDecoder<T: SplatReceiver> {
     buffer_offset: usize,
     state: Option<SpzDecoderState>,
     done: bool,
+    window_memory: usize,
     #[cfg(test)]
     v4_peak_compressed_buffer_size: usize,
 }
@@ -126,17 +116,13 @@ impl<T: SplatReceiver> SpzDecoder<T> {
         Self {
             splats,
             format: SpzFormat::Unknown,
-            decompressor: DecompressorOxide::new(),
+            decompressor: Decompress::new_gzip(15),
             compressed: Vec::new(),
             decompressed: Vec::new(),
             buffer: Vec::new(),
             state: None,
-            gzip_header_done: false,
-            gzip_deflate_done: false,
-            gzip_crc: crc32fast::Hasher::new(),
-            gzip_size: 0,
-            out_pos: 0,
             done: false,
+            window_memory: 0,
             raw: Vec::new(),
             v4_stage: V4Stage::NeedHeader,
             expected_input_size: None,
@@ -148,6 +134,16 @@ impl<T: SplatReceiver> SpzDecoder<T> {
 
     pub fn into_splats(self) -> T {
         self.splats
+    }
+
+    fn reserve_memory(&mut self, input_capacity: usize) -> anyhow::Result<()> {
+        // Attribute batches, receiver conversion, block scratch, and gzip
+        // buffers. ZSTD's retained ring buffer is accounted separately.
+        self.splats.reserve_decoder_memory(
+            (16 * 1024 * 1024usize)
+                .saturating_add(input_capacity.saturating_mul(3))
+                .saturating_add(self.window_memory),
+        )
     }
 
     fn poll(&mut self) -> anyhow::Result<()> {
@@ -388,6 +384,15 @@ impl<T: SplatReceiver> SpzDecoder<T> {
             if self.raw.len() < MAX_ZSTD_FRAME_HEADER_SIZE && !input_complete {
                 return Ok(false);
             }
+            let window = zstd_window_size(&self.raw)?;
+            if window <= MAX_ZSTD_WINDOW_SIZE {
+                // ruzstd rounds its ring buffer up to a power of two, retaining
+                // a window plus one block. Growth keeps the old buffer briefly.
+                let capacity = (window as usize + MAX_ZSTD_BLOCK_SIZE + 1).next_power_of_two();
+                self.window_memory = self.window_memory.max(capacity * 3 / 2 + 2);
+                self.reserve_memory(self.compressed.capacity())?;
+            }
+            // Oversized windows are rejected by init() before allocation.
             let mut header = self.raw.as_slice();
             stream_decoder
                 .decoder
@@ -657,77 +662,39 @@ impl<T: SplatReceiver> SpzDecoder<T> {
                 Err(anyhow::anyhow!("Trailing data after gzip stream"))
             };
         }
-        if !self.gzip_header_done {
-            let Some(header_size) = parse_gzip_header(&self.compressed)? else {
-                return Ok(());
-            };
-            self.compressed.drain(..header_size);
-            self.gzip_header_done = true;
-        }
+        // zlib-rs parses the gzip header and validates its CRC and length trailer.
         let mut in_offset = 0;
-        let flags: u32 = TINFL_FLAG_HAS_MORE_INPUT | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF;
-        while !self.gzip_deflate_done && in_offset < self.compressed.len() {
-            // Ensure at least 64 KiB free space; keep last 32 KiB history at buffer start
-            const WINDOW: usize = 32 * 1024;
-            let free = self.decompressed.len() - self.out_pos;
-            if free < 64 * 1024 {
-                self.decompressed
-                    .copy_within(self.out_pos - WINDOW..self.out_pos, 0);
-                self.out_pos = WINDOW;
-            }
-
-            let (status, in_consumed, out_written) = decompress(
-                &mut self.decompressor,
-                &self.compressed[in_offset..],
-                &mut self.decompressed,
-                self.out_pos,
-                flags,
-            );
+        while !self.done {
+            let in_before = self.decompressor.total_in();
+            let out_before = self.decompressor.total_out();
+            let status = self
+                .decompressor
+                .decompress(
+                    &self.compressed[in_offset..],
+                    &mut self.decompressed,
+                    FlushDecompress::None,
+                )
+                .map_err(|error| anyhow::anyhow!("Decompression failed: {}", error))?;
+            let in_consumed = (self.decompressor.total_in() - in_before) as usize;
+            let out_written = (self.decompressor.total_out() - out_before) as usize;
 
             if out_written > 0 {
-                self.gzip_crc
-                    .update(&self.decompressed[self.out_pos..self.out_pos + out_written]);
-                self.gzip_size = self.gzip_size.wrapping_add(out_written as u32);
                 self.compact_buffer();
-                self.buffer.extend_from_slice(
-                    &self.decompressed[self.out_pos..self.out_pos + out_written],
-                );
-                self.out_pos += out_written;
+                self.buffer
+                    .extend_from_slice(&self.decompressed[..out_written]);
                 self.poll()?;
             }
 
             in_offset += in_consumed;
-            match status {
-                TINFLStatus::Done => {
-                    self.gzip_deflate_done = true;
-                    break;
-                }
-                TINFLStatus::NeedsMoreInput => {
-                    if in_consumed == 0 && out_written == 0 {
-                        break;
-                    }
-                }
-                TINFLStatus::HasMoreOutput => {
-                    // Continue with same input, will loop again; ensure space on next iteration
-                    continue;
-                }
-                _ => return Err(anyhow::anyhow!("Decompression failed: {:?}", status)),
+            if status == Status::StreamEnd {
+                self.done = true;
+            } else if in_consumed == 0 && out_written == 0 {
+                break;
             }
         }
-        if in_offset > 0 {
-            self.compressed.drain(..in_offset);
-        }
-        if self.gzip_deflate_done && self.compressed.len() >= 8 {
-            if self.compressed.len() != 8 {
-                return Err(anyhow::anyhow!("Trailing data after gzip stream"));
-            }
-            if read_u32_le(&self.compressed[..4]) != self.gzip_crc.clone().finalize()
-                || read_u32_le(&self.compressed[4..8]) != self.gzip_size
-            {
-                return Err(anyhow::anyhow!("Gzip checksum or size mismatch"));
-            }
-            self.compressed.clear();
-            self.done = true;
+        self.compressed.drain(..in_offset);
+        if self.done && !self.compressed.is_empty() {
+            return Err(anyhow::anyhow!("Trailing data after gzip stream"));
         }
         Ok(())
     }
@@ -877,6 +844,29 @@ fn next_zstd_block_input(input: &[u8], has_checksum: bool) -> anyhow::Result<Opt
     Ok(Some(size))
 }
 
+// ruzstd does not expose the frame window size. Read only this allocation hint
+// before init(); ruzstd still validates the full frame header and content size.
+fn zstd_window_size(header: &[u8]) -> anyhow::Result<u64> {
+    let descriptor = *header
+        .get(4)
+        .ok_or_else(|| anyhow::anyhow!("Truncated ZSTD header"))?;
+    if descriptor & 0x20 == 0 {
+        let window = *header
+            .get(5)
+            .ok_or_else(|| anyhow::anyhow!("Truncated ZSTD header"))?;
+        let base = 1u64 << (10 + (window >> 3));
+        return Ok(base + base / 8 * u64::from(window & 7));
+    }
+    let offset = 5 + [0, 1, 2, 4][(descriptor & 3) as usize];
+    let size = [1, 2, 4, 8][(descriptor >> 6) as usize];
+    let bytes = header
+        .get(offset..offset + size)
+        .ok_or_else(|| anyhow::anyhow!("Truncated ZSTD header"))?;
+    let mut value = [0; 8];
+    value[..size].copy_from_slice(bytes);
+    Ok(u64::from_le_bytes(value) + if size == 2 { 256 } else { 0 })
+}
+
 fn validate_splat_parameters(sh_degree: usize, fractional_bits: u8) -> anyhow::Result<()> {
     if sh_degree > 4 {
         return Err(anyhow::anyhow!(
@@ -904,6 +894,14 @@ impl<T: SplatReceiver> ChunkReceiver for SpzDecoder<T> {
     }
 
     fn push(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        let input_capacity = if self.format == SpzFormat::Ngsp {
+            0 // v4 compressed blocks are bounded independently of push size.
+        } else {
+            self.compressed
+                .capacity()
+                .max(self.compressed.len().saturating_add(bytes.len()))
+        };
+        self.reserve_memory(input_capacity)?;
         let mut bytes = bytes;
         if self.format == SpzFormat::Unknown {
             let take = (4 - self.raw.len()).min(bytes.len());
@@ -1036,7 +1034,10 @@ fn read_i24_le(three: &[u8]) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use miniz_oxide::deflate::compress_to_vec;
+    use flate2::{
+        read::{GzDecoder, GzEncoder},
+        Compression,
+    };
 
     use super::*;
     use crate::{
@@ -1343,11 +1344,10 @@ mod tests {
     }
 
     fn gzip_file(raw: &[u8]) -> Vec<u8> {
-        let compressed = compress_to_vec(raw, 6);
-        let mut gzip = vec![0x1f, 0x8b, 0x08, 0, 0, 0, 0, 0, 0, 0];
-        gzip.extend_from_slice(&compressed);
-        gzip.extend_from_slice(&crc32fast::hash(raw).to_le_bytes());
-        gzip.extend_from_slice(&(raw.len() as u32).to_le_bytes());
+        let mut gzip = Vec::new();
+        GzEncoder::new(raw, Compression::new(6))
+            .read_to_end(&mut gzip)
+            .unwrap();
         gzip
     }
 
@@ -1429,8 +1429,10 @@ mod tests {
     #[test]
     fn discards_legacy_v3_extensions_with_bounded_memory_and_validates_crc() {
         let original = legacy_v3_file();
-        let mut raw =
-            miniz_oxide::inflate::decompress_to_vec(&original[10..original.len() - 8]).unwrap();
+        let mut raw = Vec::new();
+        GzDecoder::new(original.as_slice())
+            .read_to_end(&mut raw)
+            .unwrap();
         raw[14] = 2; // v3 extensions flag
         raw.resize(2 * 1024 * 1024, 0);
         let file = gzip_file(&raw);

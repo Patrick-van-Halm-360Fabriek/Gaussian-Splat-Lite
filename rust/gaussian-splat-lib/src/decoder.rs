@@ -1,13 +1,6 @@
 use std::any::Any;
 
-use miniz_oxide::inflate::{
-    core::{
-        decompress,
-        inflate_flags::{TINFL_FLAG_HAS_MORE_INPUT, TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF},
-        DecompressorOxide,
-    },
-    TINFLStatus,
-};
+use flate2::{Decompress, FlushDecompress, Status};
 
 use crate::{
     ply::{PlyDecoder, PLY_MAGIC},
@@ -77,6 +70,13 @@ impl QuantizedProperty {
 
 #[allow(unused)]
 pub trait SplatReceiver: 'static {
+    const SUPPORTS_COMPRESSED_PLY: bool = true;
+
+    /// Reserve the decoder's estimated live working memory before allocation.
+    /// Budgeted receivers can spill their output storage to make room.
+    fn reserve_decoder_memory(&mut self, _bytes: usize) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn init_splats(&mut self, init: &SplatInit) -> anyhow::Result<()> {
         Ok(())
     }
@@ -400,78 +400,16 @@ fn new_decoder<T: SplatReceiver>(file_type: SplatFileType, splats: T) -> Box<dyn
 }
 
 fn try_gunzip(buffer: &[u8], max_bytes: usize) -> anyhow::Result<Option<Vec<u8>>> {
-    let Some(end) = parse_gzip_header(buffer)? else {
-        return Ok(None);
-    };
-
     let mut buffer_gz = vec![0u8; max_bytes];
-    let mut decompressor = DecompressorOxide::new();
-    let (status, _in_consumed, out_written) = decompress(
-        &mut decompressor,
-        &buffer[end..],
-        &mut buffer_gz,
-        0,
-        TINFL_FLAG_HAS_MORE_INPUT | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF,
-    );
-    match status {
-        TINFLStatus::Failed => Ok(Some(Vec::new())),
-        TINFLStatus::Done | TINFLStatus::HasMoreOutput => {
-            buffer_gz.truncate(out_written);
-            Ok(Some(buffer_gz))
-        }
-        TINFLStatus::NeedsMoreInput => {
-            // Do nothing, try again next time
-            Ok(None)
-        }
-        _ => Err(anyhow::anyhow!("Decompression failed: {:?}", status)),
-    }
-}
-
-pub(crate) fn parse_gzip_header(buffer: &[u8]) -> anyhow::Result<Option<usize>> {
-    if buffer.len() < 10 {
+    let mut decompressor = Decompress::new_gzip(15);
+    let status = decompressor
+        .decompress(buffer, &mut buffer_gz, FlushDecompress::None)
+        .map_err(|error| anyhow::anyhow!("Decompression failed: {}", error))?;
+    let out_written = decompressor.total_out() as usize;
+    if status != Status::StreamEnd && out_written < max_bytes {
+        // Header or first bytes still incomplete: try again next time.
         return Ok(None);
     }
-    if buffer[0] != 0x1f || buffer[1] != 0x8b || buffer[2] != 8 {
-        return Err(anyhow::anyhow!("Invalid gzip header"));
-    }
-
-    let flags = buffer[3];
-    if flags & 0xe0 != 0 {
-        return Err(anyhow::anyhow!("Invalid gzip flags"));
-    }
-    let mut end = 10;
-
-    if (flags & 0x04) != 0 {
-        if buffer.len() < end + 2 {
-            return Ok(None);
-        }
-        let extra_len = (buffer[end] as usize) | ((buffer[end + 1] as usize) << 8);
-        end += 2;
-        if buffer.len() < end + extra_len {
-            return Ok(None);
-        }
-        end += extra_len;
-    }
-
-    for flag in [0x08, 0x10] {
-        if flags & flag != 0 {
-            let Some(null) = buffer[end..].iter().position(|byte| *byte == 0) else {
-                return Ok(None);
-            };
-            end += null + 1;
-        }
-    }
-
-    if (flags & 0x02) != 0 {
-        if buffer.len() < end + 2 {
-            return Ok(None);
-        }
-        let expected = u16::from_le_bytes([buffer[end], buffer[end + 1]]);
-        if crc32fast::hash(&buffer[..end]) as u16 != expected {
-            return Err(anyhow::anyhow!("Gzip header checksum mismatch"));
-        }
-        end += 2;
-    }
-
-    Ok(Some(end))
+    buffer_gz.truncate(out_written);
+    Ok(Some(buffer_gz))
 }

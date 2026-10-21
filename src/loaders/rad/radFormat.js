@@ -17,7 +17,7 @@ export function unpackRadChunk(decoded) {
     lodRadii: decoded.lodRadii,
   };
 }
-/** Without chunkSize, Spark treats the dataset as one chunk. */
+/** Without chunkSize, the dataset is treated as one chunk. */
 export function getRadChunkSpan(meta, index) {
   const chunk = meta.chunks[index];
   const base = chunk.base ?? index * (meta.chunkSize ?? meta.count);

@@ -1,8 +1,12 @@
 //! SOG metadata, image and property decoding into a SplatReceiver.
 //! Only the current property group and packed SH palette remain in the decoder.
-use std::{array, io::Cursor};
+use std::{
+    array,
+    io::{Cursor, Read},
+};
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
+use flate2::read::DeflateDecoder;
 use serde_json::Value;
 
 use crate::{
@@ -297,11 +301,20 @@ fn unpack(bytes: Vec<u8>, method: u32, size: usize, crc: f64) -> Result<Vec<u8>>
     let known_size = size != 0 || crc >= 0.0;
     let bytes = match method {
         0 => bytes,
-        8 => miniz_oxide::inflate::decompress_to_vec_with_limit(
-            &bytes,
-            if known_size { size } else { usize::MAX },
-        )
-        .map_err(|error| anyhow!("invalid ZIP deflate stream: {error:?}"))?,
+        8 => {
+            // Probe one byte beyond the declared size so excess output is rejected.
+            let limit = if known_size {
+                (size as u64).saturating_add(1)
+            } else {
+                u64::MAX
+            };
+            let mut decoded = Vec::new();
+            DeflateDecoder::new(bytes.as_slice())
+                .take(limit)
+                .read_to_end(&mut decoded)
+                .context("invalid ZIP deflate stream")?;
+            decoded
+        }
         _ => bail!("unsupported ZIP method {method}"),
     };
     ensure!(
@@ -614,5 +627,33 @@ mod image_tests {
         bytes.extend_from_slice(&0x00ff_c3ffu32.to_le_bytes());
         bytes.push(0);
         assert!(Image::decode(&bytes).is_err());
+    }
+}
+
+#[cfg(test)]
+mod unpack_tests {
+    use std::io::Read;
+
+    use flate2::{read::DeflateEncoder, Compression};
+
+    use super::unpack;
+
+    #[test]
+    fn inflates_zip_entries_with_exact_size_and_crc() {
+        let data = b"{\"version\":2}".repeat(100);
+        let crc = crc32fast::hash(&data);
+        let mut packed = Vec::new();
+        DeflateEncoder::new(data.as_slice(), Compression::new(6))
+            .read_to_end(&mut packed)
+            .unwrap();
+        let unpack = |bytes: &[u8], size: usize, crc: f64| unpack(bytes.to_vec(), 8, size, crc);
+        assert_eq!(unpack(&packed, data.len(), crc as f64).unwrap(), data);
+        assert_eq!(unpack(&packed, 0, -1.0).unwrap(), data);
+        // Declared size without CRC: the size alone must reject longer or shorter output.
+        assert!(unpack(&packed, data.len() - 1, -1.0).is_err());
+        assert!(unpack(&packed, data.len() + 1, -1.0).is_err());
+        assert!(unpack(&packed, data.len(), (crc ^ 1) as f64).is_err());
+        assert!(unpack(&packed[..packed.len() - 1], data.len(), crc as f64).is_err());
+        assert!(unpack(&packed[..packed.len() / 2], 0, -1.0).is_err());
     }
 }

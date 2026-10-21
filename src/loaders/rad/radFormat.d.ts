@@ -7,7 +7,7 @@ export type RadChunkRange = {
   count?: number;
   filename?: string;
 };
-/** Spark RAD version 1 directory. Child references use file-global indices. */
+/** RAD version 1 directory. Child references use file-global indices. */
 export type RadMeta = {
   version: number;
   type: "gsplat";
@@ -43,7 +43,7 @@ export type RadDecodedChunk = PostDecodeSplatData & {
   lodRadii?: Float32Array;
 };
 export declare function unpackRadChunk(decoded: RadDecodedChunk): RadChunkData;
-/** Without chunkSize, Spark treats the dataset as one chunk. */
+/** Without chunkSize, the dataset is treated as one chunk. */
 export declare function getRadChunkSpan(
   meta: RadMeta,
   index: number,

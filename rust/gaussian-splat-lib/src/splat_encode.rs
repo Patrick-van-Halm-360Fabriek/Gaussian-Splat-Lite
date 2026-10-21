@@ -127,7 +127,7 @@ pub fn decode_splat_center(splat_a: &[u32]) -> [f32; 3] {
     ]
 }
 
-/// Encodes raw opacity as regular alpha plus Spark's nonlinear wider-kernel
+/// Encodes raw opacity as regular alpha plus a nonlinear wider-kernel
 /// shape amount. Shape is limited to [0, 1], matching the renderer's [1, 5].
 pub fn encode_splat_opacity(splat_a: &mut [u32], opacity: f32) {
     let raw_opacity = opacity.max(0.0);

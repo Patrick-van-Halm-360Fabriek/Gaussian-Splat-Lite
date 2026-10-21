@@ -25,6 +25,7 @@ pub struct PlyDecoder<T: SplatReceiver> {
     state: Option<PlyState>,
     prefix_remaining: u64,
     expected_input_size: Option<u64>,
+    metadata_bytes: usize,
 }
 
 impl<T: SplatReceiver> PlyDecoder<T> {
@@ -35,6 +36,7 @@ impl<T: SplatReceiver> PlyDecoder<T> {
             state: None,
             prefix_remaining: 0,
             expected_input_size: None,
+            metadata_bytes: 0,
         }
     }
 
@@ -81,8 +83,16 @@ impl<T: SplatReceiver> PlyDecoder<T> {
             return Ok(());
         };
 
+        // Header strings/property tables coexist with the input buffer. The
+        // compressed-PLY chunk table remains live throughout vertex decoding.
+        self.metadata_bytes = header_end.saturating_mul(16);
+        self.reserve_memory(self.buffer.capacity())?;
         let header = std::str::from_utf8(&self.buffer[..header_end])?;
         let parsed = parse_header(header)?;
+        anyhow::ensure!(
+            T::SUPPORTS_COMPRESSED_PLY || parsed.chunk.is_none(),
+            "Compressed PLY input is not supported"
+        );
         if let Some(size) = self.expected_input_size {
             let header_bytes = (header_end + terminator_len) as u64;
             let required = elements_byte_len(parsed.elements.iter(), header_bytes)?;
@@ -96,6 +106,16 @@ impl<T: SplatReceiver> PlyDecoder<T> {
         if parsed.chunk.is_none() {
             self.prefix_remaining =
                 elements_byte_len(parsed.elements.iter().take_while(|e| e.name != "vertex"), 0)?;
+        }
+        if let Some(chunk) = &parsed.chunk {
+            let capacity = chunk
+                .count
+                .checked_next_power_of_two()
+                .ok_or_else(|| anyhow!("PLY chunk table size overflow"))?;
+            self.metadata_bytes = self.metadata_bytes.saturating_add(
+                capacity.saturating_mul(std::mem::size_of::<SuperSplatChunk>() * 3 / 2),
+            );
+            self.reserve_memory(self.buffer.capacity())?;
         }
         let state = if parsed.chunk.is_some() {
             let state = SuperSplatState::new(parsed)?;
@@ -131,6 +151,16 @@ impl<T: SplatReceiver> PlyDecoder<T> {
         self.buffer.drain(..header_end + terminator_len);
         self.state = Some(state);
         Ok(())
+    }
+
+    fn reserve_memory(&mut self, input_capacity: usize) -> anyhow::Result<()> {
+        // Bounded property batches and receiver conversion buffers, plus input
+        // Vec growth (old and new allocations can briefly coexist).
+        self.splats.reserve_decoder_memory(
+            (12 * 1024 * 1024usize)
+                .saturating_add(input_capacity.saturating_mul(3))
+                .saturating_add(self.metadata_bytes),
+        )
     }
 
     fn poll_data(&mut self) -> anyhow::Result<()> {
@@ -441,6 +471,11 @@ impl<T: SplatReceiver> ChunkReceiver for PlyDecoder<T> {
     }
 
     fn push(&mut self, bytes: &[u8]) -> anyhow::Result<()> {
+        self.reserve_memory(
+            self.buffer
+                .capacity()
+                .max(self.buffer.len().saturating_add(bytes.len())),
+        )?;
         self.buffer.extend_from_slice(bytes);
         self.poll()?;
         Ok(())

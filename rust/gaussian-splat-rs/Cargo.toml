@@ -11,6 +11,9 @@ repository.workspace = true
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+cli = []
+
 [package.metadata.wasm-pack.profile.release.wasm-bindgen]
 omit-default-module-path = true
 

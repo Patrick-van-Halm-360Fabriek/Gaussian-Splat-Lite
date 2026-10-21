@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added `gsl-build-lod` to convert PLY and SPZ models into streamable RAD files with LOD, without compilation. Supports batch conversion, split files, up to SH3, and configurable memory and temporary storage. See [Building RAD files](docs/BuildRad.md).
+
+### Changed
+
+- RAD files and gzip-compressed SPZ files (v1–v3) decode about 10% faster.
+
 ### Fixed
 
 - Fixed incorrect orientation and unstable widths of thin Splats on WebGL, WebGPU, and the WebGL2 fallback.
