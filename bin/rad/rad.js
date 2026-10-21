@@ -40,6 +40,16 @@ function exists(file) {
     throw error;
   }
 }
+function chunkStem(output) {
+  const stem = path.basename(output, path.extname(output));
+  // Keep the on-disk name usable as a relative URL and a resolveFile key.
+  // Escape '=' too so distinct stems cannot produce the same chunk names.
+  return Array.from(stem, (char) =>
+    char <= " " || "\\%#?:=".includes(char)
+      ? encodeURIComponent(char).replace("%", "=")
+      : char,
+  ).join("");
+}
 export function checkOutput(output, chunked) {
   if (path.extname(output).toLowerCase() !== ".rad")
     throw new Error("Output must have a .rad extension");
@@ -47,7 +57,7 @@ export function checkOutput(output, chunked) {
   if (!statSync(path.dirname(output)).isDirectory())
     throw new Error("Output parent is not a directory");
   if (chunked) {
-    const prefix = `${path.basename(output, path.extname(output))}-`;
+    const prefix = `${chunkStem(output)}-`;
     for (const name of readdirSync(path.dirname(output))) {
       if (
         name.startsWith(prefix) &&
@@ -462,7 +472,7 @@ if (!isMainThread && workerData?.coder) {
 
 export async function writeRad(splats, output, chunked, lodBase) {
   const chunks = [];
-  const stem = path.basename(output, path.extname(output));
+  const stem = chunkStem(output);
   const spool = chunked ? undefined : splats.workspace.file();
   // Write every file completely before publishing chunks, then the header.
   // Publication uses separate renames, so interruption can leave final files.
