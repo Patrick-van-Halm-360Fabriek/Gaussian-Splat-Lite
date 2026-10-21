@@ -1,3 +1,4 @@
+import { Progress } from "./progress.js";
 import { IndexArray } from "./storage.js";
 
 const float = new Float32Array(1);
@@ -139,9 +140,9 @@ export class Heap {
 // same order as the heap: the items it holds now from a sorted copy, and items
 // pushed later from a second heap. Popping a sorted copy reads it in order.
 export class Queue {
-  constructor(heap, workspace) {
+  constructor(heap, workspace, label) {
     this.size = heap.length;
-    this.items = sortItems(heap.items, this.size, workspace);
+    this.items = sortItems(heap.items, this.size, workspace, false, label);
     this.cursor = 0;
     this.fresh = new Heap(workspace);
     // The popped item's key.
@@ -186,8 +187,9 @@ export class Queue {
 // The first `count` (key, index) items of `items`, sorted by descending key
 // and then index, or by key alone if `byKey`, keeping the order of items with
 // equal keys: a radix sort by byte, skipping bytes that all items share.
-function sortItems(items, count, workspace, byKey = false) {
+function sortItems(items, count, workspace, byKey = false, label = undefined) {
   const first = byKey ? 4 : 0;
+  const progress = label && new Progress(label, count * (10 - first));
   const counts = Array.from({ length: 8 }, () => new Float64Array(256));
   // Byte `pass` of the index, then of the key, inverted to sort descending.
   const digit = (key, index, pass) =>
@@ -197,6 +199,7 @@ function sortItems(items, count, workspace, byKey = false) {
     const offset = (i * 2) & items.mask;
     for (let pass = first; pass < 8; pass++)
       counts[pass][digit(words[offset], words[offset + 1], pass)]++;
+    if ((i & 4095) === 0) progress?.update(i);
   }
   let source = items;
   for (let pass = first; pass < 8; pass++) {
@@ -217,13 +220,21 @@ function sortItems(items, count, workspace, byKey = false) {
       const out = sorted.page(target, true);
       out[target & sorted.mask] = key;
       out[(target & sorted.mask) + 1] = index;
+      if ((i & 4095) === 0) progress?.update(count * (1 + pass - first) + i);
     }
     if (source !== items) source.dispose();
     source = sorted;
   }
-  if (source !== items) return source;
+  if (source !== items) {
+    progress?.finish();
+    return source;
+  }
   const copy = new IndexArray(workspace);
-  for (let i = 0; i < count * 2; i++) copy.set(i, items.get(i));
+  for (let i = 0; i < count * 2; i++) {
+    copy.set(i, items.get(i));
+    if ((i & 4095) === 0) progress?.update(count * (9 - first) + i / 2);
+  }
+  progress?.finish();
   return copy;
 }
 
@@ -231,6 +242,7 @@ function sortItems(items, count, workspace, byKey = false) {
 export function sortSplats(splats, pool) {
   const workspace = splats.workspace;
   const count = splats.length;
+  const progress = new Progress("Preparing splat sort", count);
   // Sorted by descending rank, the smallest feature comes first; sorting by
   // rank alone keeps splats of equal size in index order.
   const items = new IndexArray(workspace);
@@ -240,12 +252,19 @@ export function sortSplats(splats, pool) {
     const offset = (i * 2) & items.mask;
     words[offset] = key;
     words[offset + 1] = i;
+    if ((i & 4095) === 0) progress.update(i);
   }
-  const sorted = sortItems(items, count, workspace, true);
+  progress.finish();
+  const sorted = sortItems(items, count, workspace, true, "Sorting splats");
   items.dispose();
   const order = new IndexArray(workspace);
-  for (let i = 0; i < count; i++) order.push(sorted.get(i * 2 + 1));
+  const ordering = new Progress("Collecting splat order", count);
+  for (let i = 0; i < count; i++) {
+    order.push(sorted.get(i * 2 + 1));
+    if ((i & 4095) === 0) ordering.update(i);
+  }
   sorted.dispose();
+  ordering.finish();
   splats.reorder(order, pool);
   order.dispose();
 }

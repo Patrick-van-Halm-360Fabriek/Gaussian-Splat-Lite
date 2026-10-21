@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import init, { RawDecoder } from "../decoder/decoder.js";
+import { Progress } from "./progress.js";
 import { Splats } from "./splats.js";
 
 let wasm;
@@ -44,13 +45,19 @@ export async function readInput(input, maxSh, workspace) {
   };
   const fd = openSync(input, "r");
   try {
-    const decoder = new RawDecoder(input, fstatSync(fd).size, callback);
+    const size = fstatSync(fd).size;
+    const progress = new Progress("Reading input", size);
+    const decoder = new RawDecoder(input, size, callback);
     try {
       const bytes = Buffer.allocUnsafe(1024 * 1024);
+      let read = 0;
       for (;;) {
+        workspace.check();
         const size = readSync(fd, bytes);
         if (!size) break;
         decoder.push(bytes.subarray(0, size));
+        read += size;
+        progress.update(read);
       }
       decoder.finish();
     } catch (error) {
@@ -62,6 +69,7 @@ export async function readInput(input, maxSh, workspace) {
       throw error;
     }
     decoder.free();
+    progress.finish(`${splats.length} splats, SH${splats.inputSh}`);
     return splats;
   } catch (error) {
     splats.dispose();

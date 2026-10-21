@@ -121,6 +121,7 @@ export class Pool {
     const count =
       splats < ROUND ? 0 : threads(workspace, WORKER_BYTES, MAIN_BYTES, share);
     this.shared = {
+      cancelled: workspace.cancelled,
       control: shared(Int32Array, 16),
       // Bytes that threads read from files, for Workspace.readBytes.
       read: new BigInt64Array(new SharedArrayBuffer(8)),
@@ -251,6 +252,7 @@ export class Pool {
   }
 
   run(job, count, size) {
+    this.workspace.check();
     const gen = ++this.generation;
     const control = this.control;
     Atomics.store(control, JOB, job);
@@ -265,17 +267,19 @@ export class Pool {
     this.task.begin();
     this.task.work(gen);
     for (;;) {
+      this.workspace.check();
       const done = Atomics.load(control, DONE);
       if (done >= count) break;
-      Atomics.wait(control, DONE, done);
+      Atomics.wait(control, DONE, done, 100);
     }
     this.workspace.readBytes += Number(Atomics.exchange(this.read, 0, 0n));
     while (job === COLLECT) {
+      this.workspace.check();
       const collected = Atomics.load(control, COLLECTED);
       // A failed worker no longer answers; its error is thrown below.
       if (collected >= this.workers.length || Atomics.load(control, FAILED))
         break;
-      Atomics.wait(control, COLLECTED, collected);
+      Atomics.wait(control, COLLECTED, collected, 100);
     }
     const failed = Atomics.load(control, FAILED);
     if (failed)
@@ -391,6 +395,7 @@ class Task {
   work(gen) {
     const control = this.control;
     for (;;) {
+      if (this.cancelled && Atomics.load(this.cancelled, 0)) return;
       const next = Atomics.load(control, NEXT);
       if (next >>> 16 !== (gen & 0x7fff)) return;
       const start = next & 0xffff;

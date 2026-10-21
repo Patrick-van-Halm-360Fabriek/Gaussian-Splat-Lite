@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 
 import path from "node:path";
+import {
+  Worker,
+  isMainThread,
+  parentPort,
+  workerData,
+} from "node:worker_threads";
 import { readInput } from "./rad/input.js";
 import { buildLod } from "./rad/lod.js";
 import { Pool } from "./rad/parallel.js";
@@ -94,7 +100,7 @@ function parse(args) {
   return options;
 }
 
-async function convert(input, options) {
+async function convert(input, options, cancelled) {
   const output =
     options.output ??
     path.join(
@@ -102,7 +108,7 @@ async function convert(input, options) {
       `${path.basename(input, path.extname(input))}-lod.rad`,
     );
   checkOutput(output, options.chunked);
-  const workspace = new Workspace(options.budget, options.tempDir);
+  const workspace = new Workspace(options.budget, options.tempDir, cancelled);
   const start = performance.now();
   console.log(
     `${input} -> ${output}\nMemory target: ${(options.budget / GIB).toFixed(3)} GiB`,
@@ -110,6 +116,7 @@ async function convert(input, options) {
   // Worker threads for the LOD, closed before writing starts its own.
   let pool;
   try {
+    workspace.check();
     const splats = await readInput(input, options.maxSh, workspace);
     const count = splats.length;
     pool = new Pool(workspace, count);
@@ -150,20 +157,83 @@ async function convert(input, options) {
   }
 }
 
-try {
-  const options = parse(process.argv.slice(2));
-  if (!options) console.log(help);
-  else {
-    let failed = 0;
-    for (const input of options.inputs) {
-      try {
-        await convert(input, options);
-      } catch (error) {
-        console.error(`${input}: ${error.message ?? error}`);
-        failed++;
-      }
+async function run(options, cancelled) {
+  let failed = 0;
+  for (const input of options.inputs) {
+    if (Atomics.load(cancelled, 0)) return;
+    try {
+      await convert(input, options, cancelled);
+    } catch (error) {
+      if (Atomics.load(cancelled, 0)) return;
+      console.error(`${input}: ${error.message ?? error}`);
+      failed++;
     }
-    if (failed) throw new Error(`${failed} conversion(s) failed`);
+  }
+  if (failed) throw new Error(`${failed} conversion(s) failed`);
+}
+
+// Keep signal handling responsive while the conversion runs synchronous code.
+// The worker observes cancellation and unwinds its existing catch/finally blocks.
+async function start(options) {
+  const cancelled = new Int32Array(new SharedArrayBuffer(4));
+  let progressLine = "";
+  const endProgress = () => {
+    if (progressLine) process.stdout.write("\n");
+    progressLine = "";
+  };
+  const print = ({ method, args }) => {
+    if (method === "progress") {
+      const [line, done] = args;
+      if (process.stdout.isTTY) {
+        const width = process.stdout.columns;
+        const text = !done && width ? line.slice(0, width - 1) : line;
+        process.stdout.write(`\r\x1b[2K${text}${done ? "\n" : ""}`);
+        progressLine = done ? "" : text;
+      } else console.log(line);
+    } else {
+      // Insert logs above the live progress instead of leaving a stale row.
+      if (progressLine) process.stdout.write("\r\x1b[2K");
+      console[method](...args);
+      if (progressLine) process.stdout.write(progressLine);
+    }
+  };
+  const interrupt = (signal) => {
+    const code = signal === "SIGINT" ? 130 : 143;
+    if (Atomics.compareExchange(cancelled, 0, 0, code) === 0) {
+      endProgress();
+      console.error(`${signal}: cancelling conversion and cleaning up...`);
+    }
+  };
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", interrupt);
+  try {
+    const code = await new Promise((resolve, reject) => {
+      const worker = new Worker(new URL(import.meta.url), {
+        workerData: { options, cancelled },
+      });
+      worker.on("message", print);
+      worker.once("error", reject);
+      worker.once("exit", resolve);
+    });
+    process.exitCode = Atomics.load(cancelled, 0) || code;
+  } finally {
+    endProgress();
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", interrupt);
+  }
+}
+
+try {
+  if (!isMainThread) {
+    // Worker stdout buffers later writes until its event loop yields.
+    // Forward logs directly so synchronous conversion keeps showing progress.
+    for (const method of ["log", "warn", "error"])
+      console[method] = (...args) => parentPort.postMessage({ method, args });
+    await run(workerData.options, workerData.cancelled);
+  } else {
+    const options = parse(process.argv.slice(2));
+    if (!options) console.log(help);
+    else await start(options);
   }
 } catch (error) {
   console.error(error.message);

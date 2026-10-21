@@ -19,6 +19,7 @@ import {
 import { deflateRawSync } from "node:zlib";
 import { HALF, half, halfBits, opacityRadius } from "./math.js";
 import { YOUNG_MB, encoders } from "./parallel.js";
+import { Progress } from "./progress.js";
 import { SH_DIMS } from "./splats.js";
 import { readAll, removePath, writeAll } from "./storage.js";
 
@@ -475,10 +476,11 @@ export async function writeRad(splats, output, chunked, lodBase) {
   const stem = chunkStem(output);
   const spool = chunked ? undefined : splats.workspace.file();
   // Write every file completely before publishing chunks, then the header.
-  // Publication uses separate renames, so interruption can leave final files.
+  // Track published names too, so cancellation rolls back this conversion.
   const staged = [];
   const created = [];
   const stage = (file, write) => {
+    splats.workspace.check();
     const temporary = path.join(
       path.dirname(file),
       `.${path.basename(file)}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`,
@@ -497,6 +499,7 @@ export async function writeRad(splats, output, chunked, lodBase) {
     closeSync(fd);
   };
   let total = 0;
+  let progress;
   const store = (bytes) => {
     if (chunked) {
       const filename = `${stem}-${chunks.length}.radc`;
@@ -509,6 +512,7 @@ export async function writeRad(splats, output, chunked, lodBase) {
       chunks.push({ offset: total, bytes: bytes.length });
     }
     total += bytes.length;
+    progress.update(chunks.length);
   };
   // Gather the next chunks while workers encode earlier ones; store them in
   // order. A chunk's failure is thrown when its turn comes, not as an
@@ -520,11 +524,17 @@ export async function writeRad(splats, output, chunked, lodBase) {
   );
   try {
     // Count the encoding ranges in a first pass.
+    const chunkCount = Math.ceil(splats.length / CHUNK);
+    progress = new Progress("Analyzing RAD encoding", chunkCount);
+    let countedChunks = 0;
     for (let base = 0; base < splats.length; base += CHUNK) {
-      const counted = encoder.send(
-        "count",
-        gather(splats, base, Math.min(CHUNK, splats.length - base), false),
-      );
+      splats.workspace.check();
+      const counted = encoder
+        .send(
+          "count",
+          gather(splats, base, Math.min(CHUNK, splats.length - base), false),
+        )
+        .then(() => progress.update(++countedChunks));
       counted.catch(() => {});
       pending.push(counted);
       if (pending.length > encoder.size + 1) await pending.shift();
@@ -532,7 +542,10 @@ export async function writeRad(splats, output, chunked, lodBase) {
     while (pending.length) await pending.shift();
     const format = encoding(await encoder.counts(), splats.maxSh);
     await encoder.use(format);
+    progress.finish();
+    progress = new Progress("Encoding RAD chunks", chunkCount);
     for (let base = 0; base < splats.length; base += CHUNK) {
+      splats.workspace.check();
       const bytes = encoder.encode(
         gather(splats, base, Math.min(CHUNK, splats.length - base)),
       );
@@ -541,6 +554,7 @@ export async function writeRad(splats, output, chunked, lodBase) {
       if (pending.length > encoder.size + 1) store(await pending.shift());
     }
     while (pending.length) store(await pending.shift());
+    progress.finish(`${chunks.length} chunks`);
     const meta = header("RAD0", {
       version: 1,
       type: "gsplat",
@@ -553,27 +567,39 @@ export async function writeRad(splats, output, chunked, lodBase) {
       splatEncoding: format.meta,
       comment: `Gaussian Splat Lite quality LOD (base ${lodBase})`,
     });
+    const writing = new Progress(
+      "Writing RAD file",
+      meta.length + (spool === undefined ? 0 : total),
+    );
     stage(output, (fd) => {
       writeAll(fd, meta, 0);
       if (spool !== undefined) {
         const buffer = Buffer.allocUnsafe(1024 * 1024);
         for (let offset = 0; offset < total; offset += buffer.length) {
+          splats.workspace.check();
           const bytes = buffer.subarray(
             0,
             Math.min(buffer.length, total - offset),
           );
           readAll(spool, bytes, offset);
           writeAll(fd, bytes, meta.length + offset);
+          writing.update(meta.length + offset + bytes.length);
         }
       }
     });
+    writing.finish();
+    const publishing = new Progress("Publishing RAD files", staged.length);
     for (const { temporary, file } of staged) {
+      splats.workspace.check();
       // rename can replace an existing file, so reserve the name exclusively.
       const fd = openSync(file, "wx");
       created.push(file);
       closeSync(fd);
       renameSync(temporary, file);
+      publishing.update(created.length);
     }
+    splats.workspace.check();
+    publishing.finish();
     return meta.length + total;
   } catch (error) {
     await Promise.allSettled(pending);

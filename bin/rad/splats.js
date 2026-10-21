@@ -11,6 +11,7 @@ import {
   opacityRadius,
   quaternion,
 } from "./math.js";
+import { Progress } from "./progress.js";
 import { IndexArray, PagedArray, Permutation } from "./storage.js";
 
 export const SH_DIMS = [9, 15, 21];
@@ -129,6 +130,7 @@ export class Splats {
   // Workers refresh and check blocks of splats in place; the main thread
   // checks those they leave, and moves kept splats after skipped ones.
   retain(pool) {
+    const progress = new Progress("Filtering splats", this.length);
     const { results } = pool;
     const block = results.length;
     const record = new Float64Array(16);
@@ -175,11 +177,13 @@ export class Splats {
         }
         count++;
       }
+      progress.update(base + size);
     }
     this.length = count;
     this.records.length = count * 16;
     for (let band = 0; band < this.maxSh; band++)
       this.sh[band].length = count * SH_DIMS[band];
+    progress.finish(`${count} usable splats`);
   }
   // Also reads the splat's SH coefficients into `rows`.
   valid(index, record, rows) {
@@ -226,6 +230,10 @@ export class Splats {
     const size = later.length;
     const rows = [this.shLeft, this.shRight];
     for (let band = 0; band < this.maxSh; band++) {
+      const progress = new Progress(
+        `Blending SH${band + 1}`,
+        this.length - initial,
+      );
       const dims = SH_DIMS[band];
       const column = this.sh[band].share();
       for (let start = initial; start < this.length; start += size) {
@@ -272,17 +280,36 @@ export class Splats {
             );
         }
         column.write(start * dims, blended, count * dims);
+        progress.update(start + count - initial);
       }
+      progress.finish();
     }
     this.blend.dispose();
   }
 
   // Moves row indices[i] of the records and SH to row i.
   reorder(indices, pool) {
-    const permutation = new Permutation(this.workspace, indices, this.length);
-    this.records = permutation.apply(this.records, 16, pool);
+    const permutation = new Permutation(
+      this.workspace,
+      indices,
+      this.length,
+      "Preparing splat order",
+    );
+    this.records = permutation.apply(
+      this.records,
+      16,
+      pool,
+      false,
+      "Reordering splats",
+    );
     for (let band = 0; band < this.maxSh; band++)
-      this.sh[band] = permutation.apply(this.sh[band], SH_DIMS[band], pool);
+      this.sh[band] = permutation.apply(
+        this.sh[band],
+        SH_DIMS[band],
+        pool,
+        false,
+        `Reordering SH${band + 1}`,
+      );
     permutation.dispose();
     this.length = indices.length;
   }

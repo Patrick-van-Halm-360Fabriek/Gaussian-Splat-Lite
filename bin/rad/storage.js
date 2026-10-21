@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import v8 from "node:v8";
 import { runInNewContext } from "node:vm";
+import { Progress } from "./progress.js";
 
 export const PAGE_BYTES = 65536;
 export const GIB = 1024 ** 3;
@@ -38,9 +39,11 @@ export function collect() {
 // which a SharedArrayBuffer does not on every platform. The cache takes what
 // the budget leaves after the rest of the process, measured as it runs.
 export class Workspace {
-  constructor(budget, parent = tmpdir()) {
+  constructor(budget, parent = tmpdir(), cancelled = null) {
     this.budget = budget;
     this.parent = parent;
+    this.cancelled = cancelled;
+    this.accesses = 0;
     this.directory = undefined;
     // Pages per arena, for at most about 256 arenas: each reserves 8 GiB of
     // address space.
@@ -73,6 +76,11 @@ export class Workspace {
     this.writeBytes = 0;
     // An earlier conversion's arenas return once collected.
     this.settle();
+  }
+
+  check() {
+    if (this.cancelled && Atomics.load(this.cancelled, 0))
+      throw new Error("Conversion cancelled");
   }
 
   // Bytes all cached pages may take, at least one arena.
@@ -267,13 +275,21 @@ export class Workspace {
   }
 
   dispose() {
-    for (const fd of this.files.keys()) this.close(fd);
+    const progress = this.directory
+      ? new Progress("Cleaning temporary files", this.files.size + 1)
+      : undefined;
+    let closed = 0;
+    for (const fd of this.files.keys()) {
+      this.close(fd);
+      progress?.update(++closed);
+    }
     if (this.directory) removePath(this.directory, { recursive: true });
     this.directory = undefined;
     this.slots.length = 0;
     this.reuse.length = 0;
     this.free.length = 0;
     this.arenas.length = 0;
+    progress?.finish();
     if (this.readBytes || this.writeBytes) {
       console.log(
         `Temporary array I/O: ${(this.readBytes / 1048576).toFixed(1)} MiB read, ${(this.writeBytes / 1048576).toFixed(1)} MiB written`,
@@ -363,6 +379,8 @@ export class PagedArray {
   }
   // The page of `index`: `values`, and `words` if wordView is set.
   at(index, write = false) {
+    // Poll in-memory loops too, without an atomic read on every access.
+    if ((++this.workspace.accesses & 4095) === 0) this.workspace.check();
     const block = Math.floor(index * this.inverse);
     const page = this.pages[block] ?? this.workspace.allocate(this, block);
     page.used = true;
@@ -613,19 +631,22 @@ export class SharedColumn {
 // filled while the column is read in order, so a column larger than the cache
 // costs a few sequential passes instead of a page load per row.
 export class Permutation {
-  constructor(workspace, indices, rows) {
+  constructor(workspace, indices, rows, label) {
     this.workspace = workspace;
     this.length = indices.length;
     this.rows = rows;
     this.block = new Uint32Array(16384);
     // Source row -> target row + 1; 0 marks a row that is dropped.
     this.targets = new IndexArray(workspace);
+    const progress = label && new Progress(label, indices.length);
     for (let base = 0; base < indices.length; base += this.block.length) {
       const count = Math.min(this.block.length, indices.length - base);
       indices.read(base, this.block, count);
       for (let i = 0; i < count; i++)
         this.targets.set(this.block[i], base + i + 1);
+      progress?.update(base + count);
     }
+    progress?.finish();
   }
 
   // Returns `source` gathered into a new column, and disposes `source`. The
@@ -634,7 +655,7 @@ export class Permutation {
   // spreads over as many files as `source`.
   // With `words`, rows are copied as 32-bit words, which keeps any bits of
   // floats, and the output has word views; see PagedArray.at().
-  apply(source, stride, pool, words = false) {
+  apply(source, stride, pool, words = false, label = undefined) {
     const output = new PagedArray(
       this.workspace,
       source.Type,
@@ -653,6 +674,8 @@ export class Permutation {
         8 /
         (stride * source.Type.BYTES_PER_ELEMENT),
     );
+    const progress =
+      label && new Progress(label, Math.ceil(this.length / window) * this.rows);
     for (let start = 0; start < this.length; start += window) {
       const end = Math.min(this.length, start + window);
       output.pinned = [
@@ -682,10 +705,12 @@ export class Permutation {
           for (let d = 0; d < stride; d++)
             out[(to & output.mask) + d] = record[d];
         }
+        progress?.update(Math.floor(start / window) * this.rows + base + count);
       }
     }
     output.pinned = [0, 0];
     source.dispose();
+    progress?.finish();
     return output;
   }
 

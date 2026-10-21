@@ -1,5 +1,6 @@
 // Candidate search adapted from MIT-licensed code. See THIRD_PARTY_LICENSES.md.
 import { HALF, halfBits } from "./math.js";
+import { Progress } from "./progress.js";
 import { IndexArray, PagedArray, Permutation } from "./storage.js";
 export const NONE = 0xffffffff;
 // Files over which the tables of searches spread: worker threads read their
@@ -352,14 +353,17 @@ export class Grid extends Lookup {
   }
 
   // Adds the active splats that are not removed, in heap order.
-  build(active, removed) {
+  build(active, removed, label) {
+    const progress = label && new Progress(`${label} grid`, active.length);
     for (let i = 0; i < active.length; i++) {
       const node = active.index(i);
       if (!removed.get(node)) this.add(node);
+      if ((i & 4095) === 0) progress?.update(i);
     }
-    this.entries = this.sort(this.entries, this.length);
+    progress?.finish();
+    this.entries = this.sort(this.entries, this.length, label);
     this.sorted = this.length;
-    this.relink();
+    this.relink(label);
   }
 
   // Adds a merged splat during the level, with its terms if known, and
@@ -390,8 +394,10 @@ export class Grid extends Lookup {
   // Returns the first `length` entries of `table` stably sorted by block,
   // disposing `table` if they moved. Sorts each entry's block and position,
   // four words, and then moves the entries once.
-  sort(table, length) {
+  sort(table, length, label) {
     const passes = this.passes;
+    const progress =
+      label && new Progress(`${label} spatial sort`, length * (passes + 2));
     const digit = (words, o, pass) =>
       SPREAD[(words[o] >>> (pass * 4)) & 15] |
       (SPREAD[(words[o + 1] >>> (pass * 4)) & 15] << 1) |
@@ -409,6 +415,7 @@ export class Grid extends Lookup {
       words[o + 3] = entry;
       for (let pass = 0; pass < passes; pass++)
         counts[pass][digit(words, o, pass)]++;
+      if ((entry & 4095) === 0) progress?.update(entry);
     }
     let moved = false;
     for (let pass = 0; pass < passes; pass++) {
@@ -434,6 +441,7 @@ export class Grid extends Lookup {
         out[at + 1] = y;
         out[at + 2] = z;
         out[at + 3] = entry;
+        if ((i & 4095) === 0) progress?.update(length * (pass + 1) + i);
       }
       keys.dispose();
       keys = sorted;
@@ -441,14 +449,30 @@ export class Grid extends Lookup {
     }
     if (!moved) {
       keys.dispose();
+      progress?.finish();
       return table;
     }
     const indices = new IndexArray(this.workspace);
-    for (let i = 0; i < length; i++) indices.push(keys.get(i * 4 + 3));
+    for (let i = 0; i < length; i++) {
+      indices.push(keys.get(i * 4 + 3));
+      if ((i & 4095) === 0) progress?.update(length * (passes + 1) + i);
+    }
     keys.dispose();
-    const permutation = new Permutation(this.workspace, indices, length);
+    progress?.finish();
+    const permutation = new Permutation(
+      this.workspace,
+      indices,
+      length,
+      label && `${label} spatial order`,
+    );
     indices.dispose();
-    const sorted = permutation.apply(table, STRIDE, this.pool, true);
+    const sorted = permutation.apply(
+      table,
+      STRIDE,
+      this.pool,
+      true,
+      label && `${label} spatial reorder`,
+    );
     permutation.dispose();
     return sorted;
   }
@@ -487,7 +511,8 @@ export class Grid extends Lookup {
 
   // Rebuilds the lists in entry order. Entries of a cell are in insertion
   // order, so each list runs from the newest entry to the oldest.
-  relink() {
+  relink(label) {
+    const progress = label && new Progress(`${label} indexing`, this.length);
     this.slots.dispose();
     this.slots = new IndexArray(this.workspace).share(STRIPES);
     // Compaction keeps at most the cells there were.
@@ -496,7 +521,11 @@ export class Grid extends Lookup {
     this.count = 0;
     this.last = -1;
     this.layout++;
-    for (let entry = 0; entry < this.length; entry++) this.link(entry);
+    for (let entry = 0; entry < this.length; entry++) {
+      this.link(entry);
+      if ((entry & 4095) === 0) progress?.update(entry);
+    }
+    progress?.finish();
   }
 
   // Prepends `entry` to the list of its cell.
