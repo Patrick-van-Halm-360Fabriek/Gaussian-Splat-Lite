@@ -197,8 +197,6 @@ See [Contributing](CONTRIBUTING.md#validation) for validation commands. `npm run
 
 Gaussian Splat Lite uses [Spark](https://github.com/sparkjsdev/spark) and [SuperSplat](https://github.com/playcanvas/supersplat) as reference implementations.
 
-Example model adapted from [shehabmekky](https://superspl.at/scene/c1e6297e) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)).
-
 ## License
 
 Licensed under [Apache 2.0](LICENSE). See [NOTICE](NOTICE) and [third-party licenses](THIRD_PARTY_LICENSES.md) for attribution.

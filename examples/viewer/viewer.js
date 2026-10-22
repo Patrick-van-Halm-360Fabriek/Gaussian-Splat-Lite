@@ -43,10 +43,9 @@ const ui = createViewerUI({
 });
 
 const EXAMPLE_MODEL = {
-  name: "SplatGen_demo_addon🎁🚨.spz",
-  size: 14783722,
-  url: new URL("../SplatGen_demo_addon🎁🚨.spz", import.meta.url),
-  credit: "shehabmekky",
+  name: "JunkShop-SH3.sog",
+  size: 16389277,
+  url: new URL("../JunkShop-SH3.sog", import.meta.url),
 };
 
 const scene = new THREE.Scene();
@@ -706,7 +705,7 @@ async function initializeModel(
 
 async function loadFile(
   file,
-  { credit = "", url, button, resolveFile, manager, dispose } = {},
+  { url, button, resolveFile, manager, dispose } = {},
 ) {
   const loadId = ++activeLoad;
   cancelActiveLoad?.();
@@ -765,7 +764,6 @@ async function loadFile(
       if (radStream) frameSplat(activeSplat);
     }
     ui.showModelInfo(file, {
-      credit,
       numSplats: activeSplat.numSplats,
       streamed: Boolean(activeStream),
     });
@@ -792,7 +790,6 @@ async function loadFile(
 function loadRemoteModel(model, button) {
   return loadFile(model, {
     url: model.url.toString(),
-    credit: model.credit,
     button,
   });
 }

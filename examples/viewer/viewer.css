@@ -1145,20 +1145,6 @@ button {
   flex: 0 1 auto;
 }
 
-.model-credit-group {
-  white-space: nowrap;
-}
-
-.model-credit {
-  color: inherit;
-  text-decoration: none;
-  pointer-events: auto;
-}
-
-.model-credit:hover {
-  color: #cfff58;
-}
-
 .meta-separator {
   width: 0.2rem;
   height: 0.2rem;
