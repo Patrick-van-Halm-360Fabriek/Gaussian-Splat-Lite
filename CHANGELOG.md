@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Neural denoising shows less flicker and noise on moving objects, including moving Splats, and while the camera moves.
+
 ## [1.4.0] - 2026-10-21
 
 ### Added

@@ -297,6 +297,20 @@ export class NeuralDenoiseNode extends Node {
           this.source.texture.colorSpace || this.workingColorSpace,
         ) === LinearTransfer;
       u.set(encode ? [0, 0] : [u[62], u[63]], 64);
+      // Where this frame's samples lie, in pixels from the pixel centres: the
+      // point the jittered projection draws at the view's centre, seen
+      // through the unjittered one. Zero for a frame drawn without jitter.
+      const p = camera.projectionMatrix.elements;
+      let jitterX = 0;
+      let jitterY = 0;
+      if ([8, 9, 12, 13].some((i) => jittered[i] !== p[i])) {
+        const x = (jittered[8] - jittered[12]) / jittered[0];
+        const y = (jittered[9] - jittered[13]) / jittered[5];
+        const w = p[3] * x + p[7] * y - p[11] + p[15];
+        jitterX = (((p[0] * x + p[4] * y - p[8] + p[12]) / w) * width) / 2;
+        jitterY = (-((p[1] * x + p[5] * y - p[9] + p[13]) / w) * height) / 2;
+      }
+      u.set([jitterX, jitterY], 66);
       this.encoded.value =
         ColorManagement.getTransfer(this.workingColorSpace) === LinearTransfer;
       const gpu = (texture) => {

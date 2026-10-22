@@ -138,6 +138,7 @@ struct Params {
   cameraStill: f32,    // unchanged view and projection; history stays on the same pixel
   offset: vec2f,       // where in its target the scene was drawn
   colorOffset: vec2f,  // zero after encoding, otherwise the scene's offset
+  jitter: vec2f,       // where this frame's samples lie, in pixels from pixel centres
 };
 @group(0) @binding(0) var<uniform> P: Params;
 @group(0) @binding(1) var linearSampler: sampler;
@@ -956,6 +957,24 @@ ${groups
 @group(0) @binding(11) var wideTexture: texture_2d<f32>;
 @group(0) @binding(12) var depthPrevious: texture_2d<f32>;
 ${weights.compact ? COMPACT_FILTER : ""}${BLOCKS}
+// Catmull-Rom of the frame at a position between its pixels, from the five
+// bilinear taps catmullRomSpan takes, read through the scene's offset.
+fn frameCatmullRom(position: vec2f) -> vec4f {
+  let center: vec2f = floor(position - 0.5) + 0.5;
+  let t: vec2f = position - center;
+  let w0: vec2f = t * (-0.5 + t * (1.0 - 0.5 * t));
+  let w1: vec2f = 1.0 + t * t * (-2.5 + 1.5 * t);
+  let w2: vec2f = t * (0.5 + t * (2.0 - 1.5 * t));
+  let w3: vec2f = t * t * (-0.5 + 0.5 * t);
+  let w12: vec2f = w1 + w2;
+  let p12: vec2f = center + w2 / w12;
+  var result: vec4f = frameSample(colorTexture, p12) * (w12.x * w12.y);
+  result += frameSample(colorTexture, vec2f(center.x - 1.0, p12.y)) * (w0.x * w12.y);
+  result += frameSample(colorTexture, vec2f(center.x + 2.0, p12.y)) * (w3.x * w12.y);
+  result += frameSample(colorTexture, vec2f(p12.x, center.y - 1.0)) * (w12.x * w0.y);
+  result += frameSample(colorTexture, vec2f(p12.x, center.y + 2.0)) * (w12.x * w3.y);
+  return result / (w12.x * w12.y + (w0.x + w3.x) * w12.y + w12.x * (w0.y + w3.y));
+}
 // The frame's existing 4x4 mean, used only for rejected surfaces.
 @group(0) @binding(13) var rejectedTexture: texture_2d<f32>;
 ${COARSE}
@@ -1091,7 +1110,18 @@ ${
       : `let short: f32 = max(exp(-wh / ${float(weights.reach)}) * fast, 1.0 - same);`
   }
   let wide: vec4f = ${weights.compact ? "mix(coarse(wideTexture, position.xy, 2.0), coarse(rejectedTexture, position.xy, 4.0), 0.5)" : "coarse(wideTexture, position.xy, 2.0)"};
-  var current: vec4f = mix(mix(color, d, strength), wide, short);
+  // A frame drawn with the TAA jitter shows at pixel p what lies at
+  // p + jitter. Where history is short the denoised path carries the frame,
+  // and moving content would shift back and forth by up to half a pixel: the
+  // path reads the frame and its filtered image at p - jitter instead.
+  var source: vec4f = color;
+  var filtered: vec4f = d;
+  if (P.jitter.x != 0.0 || P.jitter.y != 0.0) {
+    let unjittered: vec2f = position.xy - P.jitter;
+    source = frameCatmullRom(unjittered);
+    filtered = ${weights.compact ? "mix(source, compactFiltered(unjittered), 0.5)" : "catmullRom(filteredTexture, unjittered * P.invSize)"};
+  }
+  var current: vec4f = mix(mix(source, filtered, strength), wide, short);
   // Strengthen only the share whose history belonged to another surface.
   // Normal fast motion keeps the learned fallback's detail.
   let rejected: vec4f = coarse(rejectedTexture, position.xy, 4.0);

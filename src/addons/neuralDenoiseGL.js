@@ -42,7 +42,7 @@ P.historyValid = ndUniform7.z; P.stabilize = ndUniform7.w;
 P.halfBias = ndUniform8.x; P.logDepth = ndUniform8.y;
 P.logNear = ndUniform8.z; P.logFar = ndUniform8.w;
 P.turn = ndUniform9.x; P.cameraStill = ndUniform9.y; P.offset = ndUniform9.zw;
-P.colorOffset = ndUniform10.xy;
+P.colorOffset = ndUniform10.xy; P.jitter = ndUniform10.zw;
 `;
 
 /** Executes the shared denoiser on either Three.js WebGL2 renderer. */
