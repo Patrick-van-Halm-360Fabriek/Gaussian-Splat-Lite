@@ -11,6 +11,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Neural denoising shows less flicker and noise on moving objects, including moving Splats, and while the camera moves.
 
+### Fixed
+
+- On `WebGPURenderer`'s WebGL2 backend, the neural denoiser's `depthTexture` stopped updating after a resize.
+
 ## [1.4.0] - 2026-10-21
 
 ### Added

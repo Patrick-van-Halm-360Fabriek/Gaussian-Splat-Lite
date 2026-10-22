@@ -126,6 +126,9 @@ export class WebGLDenoisePasses extends NeuralDenoisePasses {
       });
   }
   allocate(views, depth) {
+    // Three sizes a depth texture only with the target that first held it,
+    // and a disposed target keeps it: a new size would leave it as it was.
+    if (depth) depth.texture.renderTarget = null;
     const target = new this.Target(
       views[0]?.width ?? this.width,
       views[0]?.height ?? this.height,
