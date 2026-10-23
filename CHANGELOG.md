@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added experimental `NeuralDenoiseXR` for per-eye neural denoising in WebXR with `WebGLRenderer` and `WebGPURenderer`, including its WebGL2 fallback. See [Neural denoising](docs/NeuralDenoiseNode.md#webxr).
+
 ### Changed
 
 - Neural denoising shows less flicker and noise on moving objects, including moving Splats, and while the camera moves.

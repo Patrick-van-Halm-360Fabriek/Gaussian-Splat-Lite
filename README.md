@@ -161,7 +161,7 @@ const streaming = new SogStreamScheduler({
 - [GaussianSplatRenderer](docs/GaussianSplatRenderer.md) — Rendering options, sorting, and on-demand rendering.
 - [Stochastic rendering](docs/StochasticRendering.md) — The optional transparency mode and how to smooth its noise.
 - [TAAPass and TAANode](docs/TAAPass.md) — Temporal anti-aliasing for WebGLRenderer and WebGPURenderer.
-- [NeuralDenoiseNode and NeuralDenoisePass (Experimental)](docs/NeuralDenoiseNode.md) — Neural denoising on WebGPU and WebGL2, for scenes with moving objects.
+- [Neural denoising (Experimental)](docs/NeuralDenoiseNode.md) — Neural denoising on WebGPU and WebGL2, including per-eye WebXR rendering with `NeuralDenoiseXR`.
 - [SplatCapture](docs/SplatCapture.md) — Offscreen images, pixel readback, cube maps, and environment maps.
 
 **Models**
