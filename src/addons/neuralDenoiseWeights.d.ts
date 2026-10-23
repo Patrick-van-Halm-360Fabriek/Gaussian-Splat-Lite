@@ -9,8 +9,36 @@ export type NeuralDenoiseLayer = {
  * Trained on this renderer's stochastic frames.
  */
 export type NeuralDenoiseModel = {
-  /** Use fixed local filtering without learned multiscale passes. */
+  /**
+   * Use fixed local filtering without learned multiscale passes.
+   * Requires `compactMix` and `movingKnee` when true.
+   */
   compact?: boolean;
+  /**
+   * Required with `compact`: shares of the 3x3 mean, each in [0, 1], for
+   * settled denoised history and for camera motion or short history.
+   * The transition uses `movingKnee` and `reach`.
+   */
+  compactMix?: [settled: number, movingOrShort: number];
+  /**
+   * Maximum share of smoothing applied to the displayed accumulated path,
+   * in [0, 1]. Omitted or zero disables it; otherwise `movingNoise` and
+   * `movingKnee` are required. Applies only while the camera moves and
+   * preserves the stored accumulated history. Object motion with a still
+   * camera continues to use the existing history rejection.
+   */
+  movingMean?: number;
+  /**
+   * Required with nonzero `movingMean`: nonnegative multiplier of the
+   * mean's squared standard error. Larger values allow smoothing across
+   * greater color differences.
+   */
+  movingNoise?: number;
+  /**
+   * Required with `compact` or nonzero `movingMean`: positive camera-induced
+   * screen motion, in pixels per frame, at which the motion response is 0.5.
+   */
+  movingKnee?: number;
   /** Strengthen display stabilization for single-sample stochastic noise. */
   stabilizeNoise?: boolean;
   /** Gain of the variance gate between the two history paths. */
@@ -111,7 +139,18 @@ export type NeuralDenoiseModel = {
     pointwise3: NeuralDenoiseLayer;
     head: NeuralDenoiseLayer;
   };
-};
+} & (
+  | { compact?: false }
+  | {
+      compact: true;
+      compactMix: [settled: number, movingOrShort: number];
+      movingKnee: number;
+    }
+) &
+  (
+    | { movingMean?: 0 }
+    | { movingMean: number; movingNoise: number; movingKnee: number }
+  );
 export declare const neuralDenoiseModels: {
   quality: NeuralDenoiseModel;
   performance: NeuralDenoiseModel;

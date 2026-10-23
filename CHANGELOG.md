@@ -13,7 +13,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Neural denoising shows less flicker and noise on moving objects, including moving Splats, and while the camera moves.
+- Neural denoising reduces noise and flicker on moving objects, including moving Splats. Both modes also use less GPU time while the camera moves. During camera movement, `"quality"` adds smoothing with slightly softer detail, while `"performance"` preserves more fine detail at slow speeds.
 
 ### Removed
 
