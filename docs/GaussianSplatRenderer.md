@@ -58,7 +58,7 @@ On native WebGPU, Splats are sorted before every draw. On WebGL, sorting finishe
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `stochastic` | `boolean` | `false` | Use stochastic rendering; smooth its noise with temporal anti-aliasing |
+| `stochastic` | `boolean` | `false` | Use stochastic rendering; smooth its noise with neural denoising |
 | `stochasticSort` | `boolean` | `true` | Sort Splats from front to back in stochastic rendering; `false` skips sorting |
 | `autoAdvanceStochasticSample` | `boolean` | `true` | Change the noise pattern on every render, including in WebXR |
 
@@ -100,7 +100,7 @@ Model colors are converted for you. Control the final image with your Three.js r
 
 Set `encodeLinear` to choose the conversion yourself. For example, to blend Splats in sRGB next to a linear scene, render them into their own target with `encodeLinear: false`, then unpremultiply that layer, convert it to linear, and premultiply it again before compositing.
 
-For temporal anti-aliasing and effects such as Bloom, see [TAAPass and TAANode](TAAPass.md). To render offscreen, read pixels back, or build cube and environment maps, use [SplatCapture](SplatCapture.md).
+For neural denoising and effects such as Bloom, see [Neural denoising](NeuralDenoiseNode.md). To render offscreen, read pixels back, or build cube and environment maps, use [SplatCapture](SplatCapture.md).
 
 ## On-demand rendering
 

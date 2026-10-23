@@ -3,7 +3,7 @@ import {
   IndirectStorageBufferAttribute,
   StorageBufferAttribute,
 } from "three/webgpu";
-import { getTAAProjection } from "../../addons/taaShared.js";
+import { getUnjitteredProjection } from "../../addons/neuralDenoiseState.js";
 import { SPLATS_PER_INSTANCE } from "../SplatGeometry.js";
 import { getMeanViewPose, getViews } from "../rendererUtils.js";
 import { N, uniformBinding } from "../tsl/shaderUtils.js";
@@ -21,7 +21,7 @@ function buffer(name) {
 }
 /**
  * Stores in `jitter` the NDC translation that `jittered` adds to `base`, as
- * TAA's sub-pixel view offsets do. Returns false for any other difference.
+ * sub-pixel view offsets do. Returns false for any other difference.
  */
 function getProjectionJitter(jittered, base, jitter) {
   const a = jittered.elements;
@@ -425,12 +425,12 @@ export class ProjectedSplats {
         : null;
     if (sortMode) this.state.sortMode.value = RADIX_SORT_MODE_IDS[sortMode];
     this.state.sortRadial.value = radial;
-    // TAA exposes its unjittered projection during scene capture. Project and
+    // Denoising exposes its unjittered projection during scene capture. Project and
     // sort without the jitter so a still view reuses the compute results;
     // drawing applies the jitter as an NDC translation.
     const jitter = this.state.projectionJitter.value;
     jitter.set(0, 0);
-    const unjittered = getTAAProjection(camera);
+    const unjittered = getUnjitteredProjection(camera);
     const monoProjection =
       !multiView &&
       unjittered &&

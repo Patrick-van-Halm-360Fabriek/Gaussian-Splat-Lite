@@ -33,11 +33,6 @@ export function createViewerUI({
   const fileMeta = document.querySelector("#file-meta");
   const fileName = document.querySelector("#file-name");
   const fileStats = document.querySelector("#file-stats");
-  const modelCredit = document.querySelector("#model-credit");
-  const modelCreditGroup = document.querySelector("#model-credit-group");
-  const modelCreditSeparator = document.querySelector(
-    "#model-credit-separator",
-  );
   const dropOverlay = document.querySelector("#drop-overlay");
   const toast = document.querySelector("#toast");
   const renderOptionsToggle = document.querySelector("#render-options-toggle");
@@ -246,10 +241,7 @@ export function createViewerUI({
     syncBackgroundInteractivity();
   }
 
-  function showModelInfo(
-    file,
-    { credit = "", numSplats = 0, streamed = false } = {},
-  ) {
+  function showModelInfo(file, { numSplats = 0, streamed = false } = {}) {
     hasModel = true;
     setSourcePanelOpen(false);
     resetViewButton.hidden = false;
@@ -259,9 +251,6 @@ export function createViewerUI({
     fileStats.textContent = streamed
       ? "Loading visible regions…"
       : `${formatNumber.format(numSplats)} splats${sizeLabel}`;
-    modelCredit.textContent = credit;
-    modelCreditGroup.hidden = !credit;
-    modelCreditSeparator.hidden = !credit;
     setStatus(streamed ? "Streaming visible regions" : "Loaded and ready");
   }
 

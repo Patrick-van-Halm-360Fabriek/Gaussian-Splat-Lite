@@ -1,18 +1,10 @@
-# NeuralDenoiseNode and NeuralDenoisePass (Experimental)
+# Neural denoising (Experimental)
 
 [Back to documentation](../README.md#documentation)
 
-The experimental neural denoiser smooths [stochastic rendering](StochasticRendering.md). Use `NeuralDenoiseNode` with `WebGPURenderer`, including its WebGL2 fallback, or `NeuralDenoisePass` with `WebGLRenderer`. The trained models are included; no extra downloads are needed.
+The experimental neural denoiser smooths [stochastic rendering](StochasticRendering.md). Use `NeuralDenoiseNode` with `WebGPURenderer`, including its WebGL2 fallback, or `NeuralDenoisePass` with `WebGLRenderer`. For immersive rendering, use [NeuralDenoiseXR](#webxr) with either renderer. The trained models are included; no extra downloads are needed.
 
-## Choose between TAA and neural denoising
-
-| | `TAANode` / `TAAPass` | `NeuralDenoiseNode` / `NeuralDenoisePass` |
-| --- | --- | --- |
-| Moving objects | May leave a faint trail | Helps reduce trails; moving detail can still look soft or grainy |
-| Camera movement | Some grain returns | Smooths noise during movement; fast turns can look softer |
-| Cost | Lower | Depends on mode; Quality uses more GPU time and memory |
-
-With neural denoising, newly exposed backgrounds need time to settle. Results vary by scene and motion.
+Neural denoising smooths noise during movement and helps reduce trails behind moving objects. Moving detail can still look soft or grainy, and newly exposed backgrounds need time to settle. Results vary by scene and motion.
 
 ## Choose a mode
 
@@ -48,7 +40,7 @@ With MSAA off, stabilization is stronger to reduce flicker, which can add some t
 ## Before you start
 
 - **WebGL2 requirements.** Both WebGL2 paths require `EXT_color_buffer_float`. MSAA also requires `OES_sample_variables`; check `renderer.getContext().getExtension("OES_sample_variables")` before enabling MSAA. If it is unavailable, leave MSAA disabled. Unsupported configurations throw an error.
-- **One camera.** Use a `PerspectiveCamera` or `OrthographicCamera`. WebXR is not supported.
+- **Camera.** Use a `PerspectiveCamera` or `OrthographicCamera` for the node/pass. For WebXR, use `NeuralDenoiseXR` with your application's `PerspectiveCamera` as shown below.
 - **Stencil masks.** Create the Three.js renderer with `stencil: true` to use them.
 - **Reset after a jump.** Call `denoise.reset()` after a camera cut or scene replacement. Resizing resets automatically; normal object movement needs no reset.
 - **On-demand rendering.** Keep rendering after each change so the image can settle.
@@ -88,7 +80,7 @@ const pipeline = new RenderPipeline(renderer, color.add(bloom(color, 0.6, 0.4, 0
 
 ## WebGLRenderer: NeuralDenoisePass
 
-Use the pass in place of `RenderPass` or `TAAPass`:
+Use the pass in place of `RenderPass`:
 
 ```js
 import { NeuralDenoisePass } from "gaussian-splat-lite";
@@ -113,6 +105,33 @@ renderer.setAnimationLoop(() => {
 // On a camera cut or scene replacement: denoise.reset().
 // On cleanup: stop the animation loop, then dispose the composer and each pass.
 ```
+
+## WebXR
+
+Use `NeuralDenoiseXR` during XR frames. It supports `WebGLRenderer` and initialized `WebGPURenderer`, including its WebGL2 fallback. Each eye uses its own image history and resolution; both modes and optional MSAA are available.
+
+```js
+import { NeuralDenoiseXR } from "gaussian-splat-lite";
+
+renderer.xr.enabled = true;
+splatRenderer.stochastic = true;
+const xrDenoise = new NeuralDenoiseXR(renderer, scene, camera, "performance");
+
+renderer.setAnimationLoop(() => {
+  // Update animation here. Start the XR session using your normal XR button.
+  if (renderer.xr.isPresenting) xrDenoise.render();
+  else renderer.render(scene, camera); // Or your desktop denoising pipeline.
+});
+
+// After a teleport or scene replacement: xrDenoise.reset().
+// On cleanup: xrDenoise.dispose().
+```
+
+Call `render()` directly during an active XR animation frame. It presents the final image, including tone mapping and output color conversion; do not put it in an `EffectComposer` or `RenderPipeline`. Those desktop pipelines do not automatically become stereo pipelines. When using a desktop denoiser too, reset its history when leaving XR.
+
+The constructor takes `(renderer, scene, camera, mode = "quality", msaa = false)`. `scene`, `camera`, and `stabilize` can be changed; call `reset()` after replacing the scene or camera. If `renderer.xr.cameraAutoUpdate` is `false`, update the XR camera yourself before rendering. Eye resizing resets history automatically, and ending the session releases the eye resources.
+
+Stereo rendering increases GPU and memory use. Start with `"performance"` and MSAA off, and check image quality and frame timing on the target headset. Native WebGPU also requires the browser's [WebXR WebGPU binding](https://immersive-web.github.io/webxr-webgpu-binding/) and a session requested with the `"webgpu"` feature. The XR path presents color only; it does not provide scene depth to the XR compositor or a stereo postprocessing chain.
 
 ## Color
 

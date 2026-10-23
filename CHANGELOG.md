@@ -11,6 +11,24 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Added `LccStreamScheduler` and `Lcc2StreamScheduler` scene APIs and viewer URL/folder loading. LCC supports the 5.0 COMPRESS Portable/Quality record layouts, SH, environment splats, and coarse-first Unit selection. LCC2 0.0.3 supports verified parent/child replacement and shared-file PLY/SPZ/SOG ranges. Both enforce finite CPU/GPU admission, preserve old coverage during replacement failures, and offer distance-band hysteresis. See the README for supported profiles, limits, and release gates.
 
+## [1.4.1] - 2026-10-24
+
+### Added
+
+- Added experimental `NeuralDenoiseXR` for per-eye neural denoising in WebXR with `WebGLRenderer` and `WebGPURenderer`, including its WebGL2 fallback. See [Neural denoising](docs/NeuralDenoiseNode.md#webxr).
+
+### Changed
+
+- Neural denoising reduces noise and flicker on moving objects, including moving Splats. Both modes also use less GPU time while the camera moves. During camera movement, `"quality"` adds smoothing with slightly softer detail, while `"performance"` preserves more fine detail at slow speeds.
+
+### Removed
+
+- Removed `TAANode`, `TAAPass`, and the viewer's TAA option. Use `NeuralDenoiseNode` with `WebGPURenderer`, `NeuralDenoisePass` with `WebGLRenderer`, or `NeuralDenoiseXR` for WebXR. See [Neural denoising](docs/NeuralDenoiseNode.md).
+
+### Fixed
+
+- On `WebGPURenderer`'s WebGL2 backend, the neural denoiser's `depthTexture` stopped updating after a resize.
+
 ## [1.4.0] - 2026-10-21
 
 ### Added
@@ -123,7 +141,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - The default `minAlpha` is now `1 / 255` instead of `0.5 / 255`. Set `minAlpha: 0.5 / 255` to keep the previous look.
-- `TAAPass` is now used through `EffectComposer` with a final Three.js `OutputPass`; calling `taa.render(renderer)` on its own is no longer supported. Bloom and other effects go between the two passes without extra settings. Splat colors still match direct canvas rendering. `OutputPass` applies the renderer's tone mapping to the whole image, Splats included. See [TAAPass and TAANode](docs/TAAPass.md).
+- `TAAPass` is now used through `EffectComposer` with a final Three.js `OutputPass`; calling `taa.render(renderer)` on its own is no longer supported. Bloom and other effects go between the two passes without extra settings. Splat colors still match direct canvas rendering. `OutputPass` applies the renderer's tone mapping to the whole image, Splats included.
 
 ### Removed
 
@@ -639,7 +657,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Initial public release of the Three.js Gaussian Splatting renderer.
 
-[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.0...v1.3.1

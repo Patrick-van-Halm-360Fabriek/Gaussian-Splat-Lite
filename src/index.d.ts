@@ -2,11 +2,10 @@ export {
   GaussianSplatRenderer,
   type GaussianSplatRendererOptions,
 } from "./rendering/GaussianSplatRenderer.js";
-export { TAAPass } from "./addons/TAAPass.js";
-export { TAANode } from "./addons/TAANode.js";
 export type { NeuralDenoiseMode } from "./addons/NeuralDenoiseNode.js";
 export { NeuralDenoiseNode } from "./addons/NeuralDenoiseNode.js";
 export { NeuralDenoisePass } from "./addons/NeuralDenoisePass.js";
+export { NeuralDenoiseXR } from "./addons/NeuralDenoiseXR.js";
 export {
   SplatCapture,
   type SplatCaptureOptions,

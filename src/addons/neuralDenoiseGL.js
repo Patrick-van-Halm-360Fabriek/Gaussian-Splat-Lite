@@ -42,7 +42,7 @@ P.historyValid = ndUniform7.z; P.stabilize = ndUniform7.w;
 P.halfBias = ndUniform8.x; P.logDepth = ndUniform8.y;
 P.logNear = ndUniform8.z; P.logFar = ndUniform8.w;
 P.turn = ndUniform9.x; P.cameraStill = ndUniform9.y; P.offset = ndUniform9.zw;
-P.colorOffset = ndUniform10.xy;
+P.colorOffset = ndUniform10.xy; P.jitter = ndUniform10.zw;
 `;
 
 /** Executes the shared denoiser on either Three.js WebGL2 renderer. */
@@ -126,6 +126,9 @@ export class WebGLDenoisePasses extends NeuralDenoisePasses {
       });
   }
   allocate(views, depth) {
+    // Three sizes a depth texture only with the target that first held it,
+    // and a disposed target keeps it: a new size would leave it as it was.
+    if (depth) depth.texture.renderTarget = null;
     const target = new this.Target(
       views[0]?.width ?? this.width,
       views[0]?.height ?? this.height,

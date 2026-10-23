@@ -4,6 +4,7 @@ const quality = {
   denoisedFrames: 24,
   gateFrames: 8,
   motionKnee: 20,
+  movingKnee: 0.5,
   stabilizeBlend: 0.9,
   stabilizeSlack: 0.04,
   evidenceFrames: [3, 6, 12, 24],
@@ -548,6 +549,6 @@ const quality = {
 };
 
 export const neuralDenoiseModels = {
-  quality,
-  performance: { ...quality, compact: true },
+  quality: { ...quality, movingMean: 1, movingNoise: 16 },
+  performance: { ...quality, compact: true, compactMix: [0.5, 0.75] },
 };
