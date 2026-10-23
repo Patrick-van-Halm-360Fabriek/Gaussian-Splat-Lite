@@ -15,6 +15,10 @@ export declare function regionMemory(
   count: number,
   shDegree: number,
 ): { cpu: number; gpu: number };
+export declare function batchMemory(
+  count: number,
+  shDegree: number,
+): { cpu: number; gpu: number };
 export declare function sourceMemory(source: BudgetedSceneSource): number;
 export declare class SceneMemory {
   readonly maxCpu: number;

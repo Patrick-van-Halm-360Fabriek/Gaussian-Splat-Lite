@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { getSplatShDegree } from "../../../data/splatData.js";
 import { RetryTimer } from "../../../runtime/retry.js";
 import { StreamCameras, streamViews } from "../StreamCameras.js";
 import {
@@ -8,8 +7,12 @@ import {
   positiveInteger,
   streamRetryAt,
 } from "../streamOptions.js";
+import {
+  SceneBatchAllocator,
+  sceneBatchMemory,
+} from "./SceneBatchAllocator.js";
 import { SceneStreamLoader } from "./SceneStreamLoader.js";
-import { SceneMemory, regionMemory, sourceMemory } from "./memory.js";
+import { SceneMemory, sourceMemory } from "./memory.js";
 import { SceneSources } from "./resources.js";
 
 function viewScores(units, cameras, group) {
@@ -93,6 +96,9 @@ export class SceneStreamScheduler {
         );
         return new SogStreamBatch(count, degree, this.group, () => {});
       });
+    this.batches = new SceneBatchAllocator(this.memory, (count, degree) =>
+      this.createBatch(count, degree),
+    );
     this.sources = new SceneSources(
       (source, signal) => this.loader.load(source, signal),
       this.memory,
@@ -166,45 +172,38 @@ export class SceneStreamScheduler {
     let visibleSplats = 0;
     let visibleRegions = 0;
     let shDegree = 0;
+    const resident = [...this.batches.pages].filter(
+      (page) => page.batch,
+    ).length;
+    const visible = new Set();
     for (const shown of this.shown.values())
-      for (const batch of shown.batches)
-        shDegree = Math.max(shDegree, batch.numSh ?? 0);
-    if (this.isVisible())
-      for (const shown of this.shown.values()) {
-        for (const [index, batch] of shown.batches.entries()) {
-          if (
-            batch.visible === false ||
-            !cameras.some((camera) =>
-              camera.layers.test(batch.layers ?? this.group.layers),
-            )
+      for (const slot of shown.slots) {
+        const batch = slot.page.batch;
+        shDegree = Math.max(shDegree, slot.degree);
+        if (
+          !this.isVisible() ||
+          batch.visible === false ||
+          !cameras.some((camera) =>
+            camera.layers.test(batch.layers ?? this.group.layers),
           )
-            continue;
-          visibleSplats += shown.rep.ranges[index].count;
-          visibleRegions++;
-        }
+        )
+          continue;
+        visibleSplats += slot.count;
+        visibleRegions++;
+        visible.add(batch);
       }
     return {
       ...this.loader.stats,
       visibleSplats,
       visibleRegions,
       shDegree,
-      visibleMeshes: visibleRegions,
-      residentMeshes: [...this.shown.values()].reduce(
-        (sum, value) => sum + value.batches.length,
-        0,
-      ),
+      visibleMeshes: visible.size,
+      residentMeshes: resident,
       residentChunks: this.sources.entries.size,
       residentBytes: this.memory.cpu + this.memory.gpu,
-      pendingBytes: [...this.jobs.values()].reduce(
-        (sum, job) =>
-          sum +
-          job.rep.ranges.reduce(
-            (bytes, range) =>
-              bytes + regionMemory(range.count, range.source.shDegree).cpu,
-            0,
-          ),
-        0,
-      ),
+      pendingBytes: this.batches.pendingBytes + this.sources.pendingBytes,
+      cachedBytes: this.sources.cachedBytes,
+      failedNodes: this.failures.size,
       loadingChunks: this.jobs.size,
       loadProgress: this.wanted.size
         ? [...this.wanted].filter(
@@ -260,9 +259,7 @@ export class SceneStreamScheduler {
           ...representations.flatMap((rep) => rep.ranges),
           ...(model.environment?.ranges ?? []),
         ];
-        const regions = ranges.map((range) =>
-          regionMemory(range.count, range.source.shDegree),
-        );
+        const regions = sceneBatchMemory(ranges);
         const sources = [
           ...new Map(
             ranges.map((range) => [range.source.key, range.source]),
@@ -272,10 +269,10 @@ export class SceneStreamScheduler {
           representations.reduce((sum, rep) => sum + rep.count, envCount) <=
             this.splatBudget &&
           this.memory.cpu +
-            regions.reduce((sum, item) => sum + item.cpu, 0) +
+            regions.cpu +
             Math.max(0, ...sources.map((source) => sourceMemory(source))) <=
             this.memory.maxCpu &&
-          regions.reduce((sum, item) => sum + item.gpu, 0) <= this.memory.maxGpu
+          regions.gpu <= this.memory.maxGpu
         );
       };
       if (!alternatives.some(fits))
@@ -340,6 +337,12 @@ export class SceneStreamScheduler {
         this.shown.delete(id);
         this.changed();
       }
+    this.releaseCoarse();
+    if (selected.size && !this.reserveCoarse()) {
+      for (const rep of selected.values()) this.blocked.add(rep.id);
+      this.checkReadiness();
+      return changed || this.dirty;
+    }
     // A bounded point budget also includes old regions during atomic replacement.
     let liveCount = [...this.shown.values()].reduce(
       (sum, shown) => sum + shown.rep.count,
@@ -406,6 +409,48 @@ export class SceneStreamScheduler {
     this.dispose();
     notifyStreamError(this.options, error, this.options.url);
   }
+  reserveCoarse() {
+    if (this.model.coarseCount === undefined || this.coarseSlots) return true;
+    const entries = this.model.units.map((unit) => [
+      unit.id,
+      unit.representations[0],
+    ]);
+    if (this.model.environment)
+      entries.push(["environment", this.model.environment]);
+    const ranges = entries.flatMap(([, rep]) => rep.ranges);
+    const allocation = this.batches.estimate(ranges);
+    this.sources.trim(allocation.cpu, allocation.gpu);
+    const slots = this.batches.reserve(ranges);
+    if (!slots) return false;
+    // Keep the admitted coarse layout fixed across camera order and detail replacement.
+    this.coarseReservations = new Set(slots);
+    this.coarseSlots = new Map();
+    let offset = 0;
+    for (const [id, rep] of entries) {
+      this.coarseSlots.set(id, {
+        rep,
+        slots: slots.slice(offset, offset + rep.ranges.length),
+      });
+      offset += rep.ranges.length;
+    }
+    return true;
+  }
+  releaseSlots(slots) {
+    for (const slot of slots) {
+      if (this.coarseReservations?.has(slot)) {
+        if (slot.published) slot.page.batch.setRegionOpacity(slot.start, 0);
+        slot.published = false;
+      } else this.batches.release(slot);
+    }
+  }
+  releaseCoarse() {
+    if (this.jobs.size || (this.wanted.size && !this.disposed)) return;
+    for (const slot of this.coarseReservations ?? [])
+      this.batches.release(slot);
+    this.coarseSlots = undefined;
+    this.coarseReservations = undefined;
+  }
+
   startJob(id, rep) {
     let groups;
     try {
@@ -414,43 +459,53 @@ export class SceneStreamScheduler {
       this.failed(rep, error);
       return false;
     }
-    const uncached = groups.filter(
-      (group) => !this.sources.entries.has(group.source.key),
-    );
-    // New pipelines join the current file or wait; prepared cuts must not occupy two decoder envelopes.
-    if (
-      groups.length &&
-      (this.sources.entries.size || this.sources.closing.size) &&
-      !this.sources.entries.has(groups[0].source.key)
-    )
-      return false;
-    const allocation = rep.ranges.map((range) =>
-      regionMemory(range.count, range.source.shDegree),
-    );
-    const cpu = allocation.reduce((sum, item) => sum + item.cpu, 0);
-    const gpu = allocation.reduce((sum, item) => sum + item.gpu, 0);
-    const sourcePeak = Math.max(0, ...uncached.map((group) => group.bytes));
+    // Idle caches can expire before a later group is extracted.
+    const sourcePeak = Math.max(0, ...groups.map((group) => group.bytes));
+    // Keep a decoder envelope for coarse units a later camera can reveal.
+    const missing =
+      this.shown.has(id) && this.model.coarseCount !== undefined
+        ? this.model.units
+            .filter(
+              (unit) =>
+                unit.id !== id &&
+                !this.shown.has(unit.id) &&
+                !this.jobs.has(unit.id),
+            )
+            .flatMap((unit) => unit.representations[0].ranges)
+        : [];
+    const coarse = this.coarseSlots?.get(id);
+    const reserved = coarse?.rep.id === rep.id ? coarse.slots : undefined;
+    const allocation = reserved
+      ? { cpu: 0, gpu: 0 }
+      : this.batches.estimate(rep.ranges);
     const peak = Math.max(
       sourcePeak,
       ...[...this.jobs.values()].map((job) => job.peak),
+      ...missing.map((range) => sourceMemory(range.source)),
     );
+    this.sources.trim(allocation.cpu + peak, allocation.gpu);
+    // New pipelines join the current file or wait; prepared cuts must not occupy two decoder envelopes.
+    if (
+      groups.length &&
+      (this.sources.closing.size ||
+        [...this.sources.entries.values()].some(
+          (entry) => entry.users || entry.pending,
+        )) &&
+      !this.sources.entries.has(groups[0].source.key)
+    )
+      return false;
     const stable = this.jobs.size
       ? this.model.metadataBytes * 3 +
-        [...this.jobs.values()].reduce((sum, job) => sum + job.cpu, 0) +
-        [...this.shown.values()].reduce(
-          (sum, shown) =>
-            sum +
-            shown.rep.ranges.reduce(
-              (bytes, range) =>
-                bytes + regionMemory(range.count, range.source.shDegree).cpu,
-              0,
-            ),
-          0,
-        )
+        [...this.batches.pages].reduce((sum, page) => sum + page.cpu, 0)
       : this.memory.cpu;
-    if (stable + cpu + peak > this.memory.maxCpu) return false;
-    const releaseMemory = this.memory.reserve(cpu, gpu);
-    if (!releaseMemory) return false;
+    if (
+      stable + allocation.cpu + peak > this.memory.maxCpu ||
+      this.memory.gpu + allocation.gpu > this.memory.maxGpu
+    )
+      return false;
+    const slots = reserved ?? this.batches.reserve(rep.ranges);
+    if (!slots) return false;
+    const releaseMemory = () => this.releaseSlots(slots);
     const leases = new Map();
     try {
       if (groups.length) {
@@ -470,7 +525,7 @@ export class SceneStreamScheduler {
     const job = {
       rep,
       groups,
-      cpu,
+      slots,
       peak: sourcePeak,
       cancelled: false,
       extracting: false,
@@ -483,7 +538,6 @@ export class SceneStreamScheduler {
     return true;
   }
   async runJob(id, job, leases) {
-    const batches = new Array(job.rep.ranges.length);
     let published = false;
     try {
       for (const [groupIndex, group] of job.groups.entries()) {
@@ -506,20 +560,13 @@ export class SceneStreamScheduler {
               { start: range.start, count: range.count },
             ]);
             if (this.disposed || job.cancelled) return;
-            const batch = await this.createBatch(
-              data.numSplats,
-              getSplatShDegree(data.extra),
-            );
-            batches[index] = batch;
-            if (this.disposed || job.cancelled) return;
-            batch.name = `${this.adapter.name}:${id}`;
-            batch.userData.sceneStream = {
+            await this.batches.write(job.slots[index], data, {
               unit: id,
               node: range.node,
               resource: range.source.url,
               start: range.start + (range.source.sourceOffset ?? 0),
-            };
-            batch.writeRegion(0, data);
+            });
+            if (this.disposed || job.cancelled) return;
           }
         } finally {
           job.extracting = false;
@@ -552,14 +599,12 @@ export class SceneStreamScheduler {
         job.rep.count;
       if (nextCount > this.splatBudget) return;
       // No await between showing the full replacement and hiding the old representation.
-      for (const batch of batches) {
-        batch.layers.mask = this.group.layers.mask;
-        batch.setRegionOpacity(0, 1);
-      }
+      for (const slot of job.slots)
+        this.batches.publish(slot, this.group.layers.mask);
       this.shown.set(id, {
         rep: job.rep,
-        batches,
-        releaseMemory: job.releaseMemory,
+        slots: job.slots,
+        batches: job.slots.map((slot) => slot.page.batch),
       });
       published = true;
       if (old) this.releaseShown(old);
@@ -577,14 +622,9 @@ export class SceneStreamScheduler {
       ).catch((error) => {
         if (!this.disposed && !job.cancelled) this.failed(job.rep, error);
       });
-      if (!published) {
-        for (const batch of batches.filter(Boolean)) {
-          batch.removeFromParent();
-          batch.dispose();
-        }
-        job.releaseMemory();
-      }
+      if (!published) job.releaseMemory();
       if (this.jobs.get(id) === job) this.jobs.delete(id);
+      this.releaseCoarse();
       this.checkReadiness();
       this.changed();
     }
@@ -598,11 +638,7 @@ export class SceneStreamScheduler {
       for (const lease of job.leases.values()) lease.release();
   }
   releaseShown(shown) {
-    for (const batch of shown.batches) {
-      batch.removeFromParent();
-      batch.dispose();
-    }
-    shown.releaseMemory();
+    this.releaseSlots(shown.slots);
   }
   failed(rep, error) {
     const failures = (this.failures.get(rep.id)?.failures ?? 0) + 1;
@@ -636,6 +672,7 @@ export class SceneStreamScheduler {
     this.loader.dispose();
     for (const shown of this.shown.values()) this.releaseShown(shown);
     this.shown.clear();
+    this.releaseCoarse();
     this.metadataRelease?.();
     this.model = undefined;
     this.wanted.clear();

@@ -5,6 +5,7 @@ import { SogRegionSplats } from "../src/data/SogRegionSplats.js";
 import { LccStreamScheduler } from "../src/loaders/stream/lcc-stream/LccStreamScheduler.js";
 import { selectLccUnits } from "../src/loaders/stream/lcc-stream/lccScene.js";
 import { Lcc2StreamScheduler } from "../src/loaders/stream/lcc2-stream/Lcc2StreamScheduler.js";
+import { sceneBatchMemory } from "../src/loaders/stream/scene-stream/SceneBatchAllocator.js";
 import { SceneStreamLoader } from "../src/loaders/stream/scene-stream/SceneStreamLoader.js";
 import { SceneStreamScheduler } from "../src/loaders/stream/scene-stream/SceneStreamScheduler.js";
 import {
@@ -91,9 +92,13 @@ function schedulerHarness({ extract, read, budget = 8, gpu, cpu } = {}) {
           layers: new THREE.Layers(),
           visible: false,
           disposed: false,
+          opacities: new Map(),
           writeRegion() {},
-          setRegionOpacity() {
-            this.visible = true;
+          setRegionOpacity(start, opacity) {
+            this.opacities.set(start, opacity);
+            this.visible = [...this.opacities.values()].some(
+              (value) => value > 0,
+            );
           },
           removeFromParent() {
             this.visible = false;
@@ -206,9 +211,11 @@ test("minimum admission must fit point and memory budgets together", async () =>
 });
 
 test("complete coarse coverage must fit CPU and GPU budgets before loading", async () => {
-  const region = regionMemory(2, source.shDegree);
-  const cpu = 30 + region.cpu * 3 + sourceMemory(source);
-  const gpu = region.gpu * 3;
+  const region = sceneBatchMemory(
+    [rep("a", 2), rep("b", 2), rep("env", 2)].flatMap((item) => item.ranges),
+  );
+  const cpu = 30 + region.cpu + sourceMemory(source);
+  const gpu = region.gpu;
   for (const limits of [
     { cpu: cpu - 1, gpu },
     { cpu, gpu: gpu - 1 },
@@ -266,7 +273,7 @@ test("memory envelopes cover actual packed storage and enforce independent CPU/G
   assert.throws(() => memory.reserve(Number.POSITIVE_INFINITY), /cannot bound/);
 });
 
-test("shared sources deduplicate loads and only their last owner cancels", async () => {
+test("shared sources deduplicate loads and preserve active owners until cache disposal", async () => {
   const task = deferred();
   const abort = new AbortController();
   let loads = 0;
@@ -298,6 +305,7 @@ test("shared sources deduplicate loads and only their last owner cancels", async
   });
   await second.promise;
   second.release();
+  await cache.dispose();
   await flush();
   assert.equal(signal.aborted, true);
   assert.equal(disposed, 1);
@@ -364,31 +372,46 @@ test("dispose before manifest completion rejects both readiness promises", async
   assert.equal(scheduler.group.children.length, 0);
 });
 
-test("successful replacement is atomic and requires overlap GPU admission", async () => {
-  const fineGpu = regionMemory(8, 0).gpu;
-  const { scheduler, batches } = schedulerHarness({ gpu: fineGpu });
+test("successful replacement shares free slots but requires overlap GPU admission for another page", async () => {
+  const coarse = rep("large-coarse", 8192);
+  const fine = rep("large-fine", 16384);
+  const { scheduler } = schedulerHarness({
+    budget: 16384,
+    gpu: regionMemory(16384, 0).gpu,
+    read: async () => ({
+      units: [{ ...unit, representations: [coarse, fine] }],
+      boundingBox: bounds,
+      metadataBytes: 10,
+    }),
+  });
   await scheduler.initialized;
   scheduler.update();
   await flush();
-  assert.equal(scheduler.stats.visibleSplats, 2);
+  const old = scheduler.shown.get("u").slots[0];
   scheduler.update();
   await flush();
+  assert.equal(scheduler.stats.visibleSplats, 8192);
   assert.equal(
-    scheduler.stats.visibleSplats,
-    2,
-    "old batch remains when replacement overlap cannot fit",
+    old.published,
+    true,
+    "old coverage survives an inadmissible replacement",
   );
-  assert.equal(batches.length, 1);
   scheduler.dispose();
   const unrestricted = schedulerHarness();
   await unrestricted.scheduler.initialized;
   unrestricted.scheduler.update();
   await flush();
+  const previous = unrestricted.scheduler.shown.get("u").slots[0];
   unrestricted.scheduler.update();
   await flush();
   assert.equal(unrestricted.scheduler.stats.visibleSplats, 8);
-  assert.equal(unrestricted.batches[0].disposed, true);
-  assert.equal(unrestricted.batches[1].visible, true);
+  assert.equal(previous.released, true);
+  assert.equal(
+    unrestricted.batches.length,
+    1,
+    "small atomic replacements reuse shared backing storage",
+  );
+  assert.equal(unrestricted.batches[0].visible, true);
   unrestricted.scheduler.dispose();
 });
 
@@ -515,16 +538,13 @@ test("worker bridge resolves nested SOG assets by logical source URL through blo
 });
 
 test("environment admission comes before leaves under GPU pressure", async () => {
-  const environment = rep("environment", 1);
-  const second = {
-    ...unit,
-    id: "v",
-    representations: [rep("v-coarse", 2), rep("v-fine", 8)],
-  };
-  const { scheduler, batches } = schedulerHarness({
-    gpu: regionMemory(1, 0).gpu + regionMemory(2, 0).gpu,
+  const environment = rep("environment", 8192);
+  const coarse = { ...unit, representations: [rep("coarse", 8192)] };
+  const { scheduler } = schedulerHarness({
+    budget: 24576,
+    gpu: regionMemory(8192, 0).gpu * 2,
     read: async () => ({
-      units: [unit, second],
+      units: [coarse, { ...coarse, id: "v" }],
       environment,
       boundingBox: bounds,
       metadataBytes: 10,
@@ -534,11 +554,9 @@ test("environment admission comes before leaves under GPU pressure", async () =>
   scheduler.update();
   await flush();
   assert.ok(
-    batches.some(
-      (batch) => batch.name === "test-scene:environment" && batch.visible,
-    ),
+    scheduler.shown.get("environment").slots.every((slot) => slot.published),
   );
-  assert.equal(scheduler.stats.visibleSplats, 3);
+  assert.equal(scheduler.stats.visibleSplats, 16384);
   scheduler.dispose();
 });
 
@@ -710,20 +728,22 @@ test("visible counters honor hidden ancestors and camera layers; batches follow 
 });
 
 test("shrinking splatBudget releases oversized old detail even when overlap cannot fit", async () => {
-  const { scheduler, batches } = schedulerHarness();
+  const { scheduler } = schedulerHarness();
   await scheduler.initialized;
   scheduler.update();
   await flush();
   scheduler.update();
   await flush();
   assert.equal(scheduler.stats.visibleSplats, 8);
+  const fine = scheduler.shown.get("u").slots[0];
   scheduler.memory.maxGpu = regionMemory(2, 0).gpu;
   scheduler.splatBudget = 2;
   scheduler.update();
   assert.ok(scheduler.stats.visibleSplats <= 2);
   await flush();
   assert.equal(scheduler.stats.visibleSplats, 2);
-  assert.equal(batches[1].disposed, true);
+  assert.equal(fine.released, true);
+  assert.equal(scheduler.shown.get("u").slots[0].page.batch.visible, true);
   scheduler.dispose();
 });
 

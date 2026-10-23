@@ -3,6 +3,8 @@ import test from "node:test";
 import * as THREE from "three";
 import { SH_ARRAY_COUNTS } from "../src/data/splatData.js";
 import { selectLccUnits } from "../src/loaders/stream/lcc-stream/lccScene.js";
+import { sceneBatchMemory } from "../src/loaders/stream/scene-stream/SceneBatchAllocator.js";
+import { SceneStreamLoader } from "../src/loaders/stream/scene-stream/SceneStreamLoader.js";
 import { SceneStreamScheduler } from "../src/loaders/stream/scene-stream/SceneStreamScheduler.js";
 import {
   SceneMemory,
@@ -47,11 +49,7 @@ const shared = {
     range(small, 30, 1, "other-small"),
   ],
 };
-const regionCpu = (rep) =>
-  rep.ranges.reduce(
-    (sum, item) => sum + regionMemory(item.count, item.source.shDegree).cpu,
-    0,
-  );
+const regionCpu = (rep) => sceneBatchMemory(rep.ranges).cpu;
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 function deferred() {
   let resolve;
@@ -62,6 +60,10 @@ function deferred() {
   });
   return { promise, resolve, reject };
 }
+async function trim(scheduler) {
+  scheduler.sources.trim(scheduler.memory.maxCpu);
+  await until(() => !scheduler.sources.closing.size);
+}
 async function until(predicate, scheduler) {
   for (let attempt = 0; attempt < 100; attempt++) {
     scheduler?.update();
@@ -70,6 +72,127 @@ async function until(predicate, scheduler) {
   }
   assert.fail(`Pipeline did not settle: ${JSON.stringify(scheduler?.stats)}`);
 }
+test("cached later files retain reload headroom when cooldown expires during extraction", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const first = file("cached-a", 8192);
+  const later = file("cached-b", 8192);
+  const backdrop = {
+    id: "backdrop",
+    count: 128 * 8192,
+    ranges: Array.from({ length: 128 }, (_, index) =>
+      range(first, 0, 8192, `background-${index}`),
+    ),
+  };
+  const coarse = {
+    id: "coarse",
+    count: 1,
+    ranges: [range(first, 0, 1, "coarse")],
+  };
+  const detail = {
+    id: "detail",
+    count: 6 * 8192 + 1,
+    ranges: [
+      ...Array.from({ length: 6 }, (_, index) =>
+        range(first, 0, 8192, `detail-${index}`),
+      ),
+      range(later, 0, 1, "later"),
+    ],
+  };
+  const coarseBytes = sceneBatchMemory([
+    ...backdrop.ranges,
+    ...coarse.ranges,
+  ]).cpu;
+  const cpu = coarseBytes + sourceMemory(first) + 65536;
+  const extraction = deferred();
+  context.after(() => extraction.resolve());
+  let refining = false;
+  class Worker {
+    disposed = false;
+    peakWasmMemoryBytes = 65536;
+    records = new Map();
+    constructor(onDispose) {
+      this.onDispose = onDispose;
+    }
+    async call(name, args) {
+      if (name === "loadSceneSource") {
+        this.records.set(args.id, args.source);
+        return {
+          numSplats: args.source.count,
+          numSh: 0,
+          byteLength: args.source.count * 48,
+        };
+      }
+      if (name === "extractSceneRanges") {
+        const source = this.records.get(args.id);
+        assert.ok(source, "extraction must retain its source cache");
+        if (refining && source.key === first.key) await extraction.promise;
+        return args.ranges.map(({ start, count }) => ({
+          numSplats: count,
+          marker: `${source.key}:${start}`,
+          extra: {},
+        }));
+      }
+      assert.equal(name, "releaseSceneSource");
+      this.records.delete(args.id);
+    }
+    dispose() {
+      if (this.disposed) return;
+      this.disposed = true;
+      this.records.clear();
+      this.onDispose();
+    }
+  }
+  const model = {
+    units: [
+      { id: "backdrop", boundingBox: bounds, representations: [backdrop] },
+      { id: "focus", boundingBox: bounds, representations: [coarse, detail] },
+    ],
+    coarseCount: backdrop.count + coarse.count,
+    boundingBox: bounds,
+    metadataBytes: 0,
+  };
+  const state = harness(context, { model, cpu });
+  const loader = new SceneStreamLoader(
+    { url: "https://scene.invalid/scene.lcc2" },
+    () => state.scheduler.changed(),
+  );
+  loader.workerModule = Promise.resolve({ SceneStreamWorker: Worker });
+  state.scheduler.loader = loader;
+  await state.scheduler.initialized;
+  for (const source of [first, later]) {
+    const lease = state.scheduler.sources.acquire(source);
+    assert.ok(lease);
+    await lease.promise;
+    await lease.release();
+  }
+  await until(() => state.scheduler.stats.loadProgress === 1, state.scheduler);
+  refining = true;
+  state.select([
+    ["backdrop", backdrop],
+    ["focus", detail],
+  ]);
+  await tick();
+  context.mock.timers.tick(2100);
+  await tick();
+  extraction.resolve();
+  for (let attempt = 0; attempt < 100; attempt++) {
+    state.scheduler.update();
+    await tick();
+  }
+  assert.equal(
+    state.scheduler.jobs.size,
+    0,
+    "unfittable reloads must defer admission, not leave a waiting job",
+  );
+  assert.equal(state.scheduler.shown.get("focus").rep.id, "coarse");
+  assert.equal(
+    state.scheduler.stats.visibleSplats,
+    backdrop.count + coarse.count,
+  );
+  assert.ok(Math.max(...state.samples) <= cpu);
+  assert.deepEqual(state.errors, []);
+});
+
 function harness(
   context,
   {
@@ -169,12 +292,17 @@ function harness(
           layers: new THREE.Layers(),
           visible: false,
           disposed: false,
-          writeRegion(_offset, data) {
-            this.marker = data.marker;
+          markers: new Map(),
+          opacities: new Map(),
+          writeRegion(offset, data) {
+            this.markers.set(offset, data.marker);
             sample();
           },
-          setRegionOpacity() {
-            this.visible = true;
+          setRegionOpacity(offset, opacity) {
+            this.opacities.set(offset, opacity);
+            this.visible = [...this.opacities.values()].some(
+              (value) => value > 0,
+            );
           },
           removeFromParent() {
             this.visible = false;
@@ -225,16 +353,17 @@ test(
     );
     await state.scheduler.firstRenderable;
     await until(() => !state.scheduler.jobs.size, state.scheduler);
+    await trim(state.scheduler);
     assert.deepEqual(state.loads, ["large", "small"]);
     assert.deepEqual(state.releases, ["large", "small"]);
     assert.deepEqual(
-      state.scheduler.shown.get("unit-0").batches.map((batch) => batch.marker),
+      state.scheduler.shown
+        .get("unit-0")
+        .slots.map((slot) => slot.page.batch.markers.get(slot.start)),
       ["small:0", "large:20", "small:6"],
     );
     assert.deepEqual(
-      state.scheduler.shown
-        .get("unit-0")
-        .batches.map((batch) => batch.userData.sceneStream),
+      state.scheduler.shown.get("unit-0").slots.map((slot) => slot.metadata),
       cut.ranges.map((item) => ({
         unit: "unit-0",
         node: item.node,
@@ -299,6 +428,7 @@ test(
       () => state.scheduler.stats.loadProgress === 1,
       state.scheduler,
     );
+    await trim(state.scheduler);
     assert.deepEqual(state.loads, ["large", "small"]);
     assert.deepEqual(state.releases, ["large", "small"]);
     assert.equal(state.scheduler.stats.visibleSplats, 8);
@@ -347,13 +477,14 @@ for (const sameSource of [false, true]) {
         );
         await state.scheduler.firstRenderable;
         assert.equal(state.scheduler.stats.visibleSplats, 1);
-        const old = state.scheduler.shown.get("unit-0").batches[0];
+        const old = state.scheduler.shown.get("unit-0").slots[0];
         state.select([["unit-0", replacement]]);
-        await until(() => finalStarted);
-        assert.equal(old.visible, true);
-        assert.equal(old.disposed, false);
+        await until(() => finalStarted, state.scheduler);
+        assert.equal(old.published, true);
+        assert.equal(old.released, false);
         assert.equal(state.scheduler.shown.get("unit-0").rep.id, "parent");
-        assert.ok(state.batches.slice(1).every((batch) => !batch.visible));
+        const preparing = state.scheduler.jobs.get("unit-0").slots;
+        assert.ok(preparing.every((slot) => !slot.published));
         const held = state.scheduler.stats.residentCpuBytes;
         if (outcome === "cancel") {
           state.select([["unit-0", parent]]);
@@ -369,17 +500,16 @@ for (const sameSource of [false, true]) {
           finalExtraction.reject(new Error("Invalid final child"));
         } else finalExtraction.resolve();
         await until(() => !state.scheduler.jobs.size, state.scheduler);
+        await trim(state.scheduler);
         if (outcome === "success") {
-          assert.equal(old.disposed, true);
+          assert.equal(old.released, true);
           assert.equal(
             state.scheduler.shown.get("unit-0").rep.id,
             replacement.id,
           );
           assert.equal(state.scheduler.stats.visibleSplats, replacement.count);
           assert.ok(
-            state.batches
-              .slice(1)
-              .every((batch) => batch.visible && !batch.disposed),
+            preparing.every((slot) => slot.published && !slot.released),
           );
           assert.equal(
             state.scheduler.stats.residentCpuBytes,
@@ -388,13 +518,11 @@ for (const sameSource of [false, true]) {
         } else {
           state.scheduler.update();
           await tick();
-          assert.equal(old.visible, true);
-          assert.equal(old.disposed, false);
+          assert.equal(old.published, true);
+          assert.equal(old.released, false);
           assert.equal(state.scheduler.shown.get("unit-0").rep.id, "parent");
           assert.ok(
-            state.batches
-              .slice(1)
-              .every((batch) => batch.disposed && !batch.visible),
+            preparing.every((slot) => slot.released && !slot.published),
           );
           assert.equal(
             state.scheduler.stats.residentCpuBytes,
@@ -463,9 +591,18 @@ for (const overlapFits of [true, false]) {
           () => state.scheduler.stats.visibleSplats === 2671353,
           state.scheduler,
         );
-        assert.equal(old.disposed, true);
+        assert.equal(old.visible, false);
+        assert.equal(
+          old.disposed,
+          false,
+          "coarse backing stays reserved for future coverage",
+        );
         assert.equal(state.scheduler.shown.get("1").rep.id, "1:1");
         assert.equal(state.scheduler.stats.shDegree, 3);
+        assert.equal(
+          state.scheduler.stats.residentMeshes,
+          state.batches.filter((batch) => !batch.disposed).length,
+        );
         assert.equal(loadedCounts.length, 12);
         assert.ok(loadedCounts.every((count) => count <= 262144));
       } else {
@@ -528,7 +665,7 @@ test(
     await lease.promise;
     assert.deepEqual(loads, ["large", "small"]);
     await lease.release();
-    assert.equal(memory.cpu, 0);
     await sources.dispose();
+    assert.equal(memory.cpu, 0);
   },
 );

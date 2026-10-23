@@ -10,6 +10,10 @@ export interface SceneSourceHandle {
 }
 export declare class SceneStreamLoader {
   constructor(options: SceneStreamOptions, onChange: () => void);
+  private readonly resourceVersions;
+  private acceptResource;
+  private acceptResponse;
+  private readFile;
   load(
     source: BudgetedSceneSource,
     signal: AbortSignal,

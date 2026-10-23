@@ -62,6 +62,9 @@ export class SceneBudgetError extends Error {
   }
 }
 
+// Match the stream idle cooldown; memory pressure can evict sources sooner.
+const SOURCE_COOLDOWN_MS = 2000;
+
 /** One cancellation owner per storage resource, not per requesting node. */
 export class SceneSources {
   constructor(load, memory, signal, onChange) {
@@ -74,6 +77,24 @@ export class SceneSources {
     this.entries = new Map();
     this.wasmHeaps = new Map();
     this.disposed = false;
+    this._cachedBytes = 0;
+    this._pendingBytes = 0;
+  }
+  get cachedBytes() {
+    return this._cachedBytes;
+  }
+  get pendingBytes() {
+    return this._pendingBytes;
+  }
+  trim(cpu = 0, gpu = 0) {
+    let available = this.memory.maxCpu - this.memory.cpu;
+    for (const [key, entry] of this.entries) {
+      if (available >= cpu && this.memory.gpu + gpu <= this.memory.maxGpu)
+        break;
+      if (entry.users || !entry.handle) continue;
+      this.close(key, entry);
+      available += entry.cpuBytes;
+    }
   }
   acquire(source) {
     this.signal.throwIfAborted();
@@ -86,8 +107,10 @@ export class SceneSources {
         throw new Error(
           `Scene source requires at least ${envelope} maxResidentCpuBytes`,
         );
+      this.trim(envelope);
       const initialRelease = this.memory.reserve(envelope);
       if (!initialRelease) return undefined;
+      this._pendingBytes += Number.isFinite(envelope) ? envelope : 0;
       const reserveRequired = (bytes, phase) => {
         const release = this.memory.reserve(bytes);
         if (typeof release !== "function")
@@ -102,6 +125,11 @@ export class SceneSources {
       const reservations = [initialRelease];
       const releaseMemory = () => {
         for (const release of reservations) release();
+        if (entry.pending) {
+          this._pendingBytes -= entry.cpuBytes;
+          entry.pending = false;
+        }
+        entry.cpuBytes = 0;
       };
       let admitted = {
         ...source,
@@ -139,6 +167,9 @@ export class SceneSources {
                 `Source header/retained WASM requires at least ${bytes} source bytes; maxResidentCpuBytes has ${this.memory.maxCpu - this.memory.cpu + envelope} available`,
               );
             reservations.push(release);
+            const extra = Number.isFinite(bytes) ? bytes - envelope : 0;
+            this._pendingBytes += extra;
+            entry.cpuBytes += extra;
             envelope = bytes;
           }
           admitted = next;
@@ -181,6 +212,10 @@ export class SceneSources {
             worker.dispose?.(error);
             throw error;
           }
+          this._pendingBytes -= entry.cpuBytes;
+          entry.cpuBytes = Number.isFinite(envelope) ? envelope - heapLimit : 0;
+          this._pendingBytes += entry.cpuBytes;
+          entry.worker = worker;
           pinned = true;
           if (!heap) {
             heap = { bytes: bound, releases: [releaseHeap] };
@@ -189,6 +224,9 @@ export class SceneSources {
             void disposed.then(() => {
               for (const release of ownedHeap.releases) release();
               this.wasmHeaps.delete(worker);
+              // Invalidate handles before waking retries; pending loads still close after completion.
+              for (const [key, ownedEntry] of this.entries)
+                if (ownedEntry.worker === worker) this.close(key, ownedEntry);
               this.notify();
             });
           } else {
@@ -198,7 +236,7 @@ export class SceneSources {
         },
       });
       const controller = new AbortController();
-      const abort = () => controller.abort(this.signal.reason);
+      const abort = () => this.close(source.key, entry);
       this.signal.addEventListener("abort", abort, { once: true });
       let resolveClosed;
       let rejectClosed;
@@ -209,6 +247,9 @@ export class SceneSources {
       void closed.catch(() => {});
       entry = {
         users: 0,
+        pending: true,
+        cpuBytes: Number.isFinite(envelope) ? envelope : 0,
+        cacheBytes: 0,
         controller,
         handle: undefined,
         releaseMemory,
@@ -230,6 +271,8 @@ export class SceneSources {
             controller.signal.throwIfAborted();
           }
           owned.handle = handle;
+          this._pendingBytes -= owned.cpuBytes;
+          owned.pending = false;
           const cacheBytes = handle.info?.byteLength;
           if (
             pinned &&
@@ -242,6 +285,7 @@ export class SceneSources {
             reservations.length = 0;
             try {
               reservations.push(reserveRequired(cacheBytes, "cache retention"));
+              owned.cpuBytes = cacheBytes;
             } catch (error) {
               owned.handle = undefined;
               await Promise.resolve()
@@ -250,12 +294,26 @@ export class SceneSources {
               throw error;
             }
           }
+          owned.cacheBytes =
+            Number.isSafeInteger(cacheBytes) && cacheBytes >= 0
+              ? cacheBytes
+              : 0;
+          this._cachedBytes += owned.cacheBytes;
           this.notify();
           return handle;
         });
       // Callers can release a queued request before awaiting its promise.
       void entry.promise.catch(() => {});
     }
+    clearTimeout(entry.timer);
+    if (!entry.users) {
+      entry.released = new Promise((resolve, reject) => {
+        entry.resolveReleased = resolve;
+        entry.rejectReleased = reject;
+      });
+      void entry.released.catch(() => {});
+    }
+    const completed = entry.released;
     entry.users++;
     let released = false;
     return {
@@ -263,9 +321,19 @@ export class SceneSources {
       release: () => {
         if (!released) {
           released = true;
-          if (!--entry.users) this.close(source.key, entry);
+          if (!--entry.users) {
+            if (entry.handle && !entry.closing) {
+              entry.timer = setTimeout(
+                () => this.close(source.key, entry),
+                SOURCE_COOLDOWN_MS,
+              );
+              entry.timer.unref?.();
+              entry.resolveReleased();
+              this.notify();
+            } else this.close(source.key, entry);
+          }
         }
-        return entry.closed;
+        return completed;
       },
     };
   }
@@ -273,15 +341,20 @@ export class SceneSources {
     if (entry.closing) return entry.closed;
     entry.closing = true;
     if (this.entries.get(key) === entry) this.entries.delete(key);
+    clearTimeout(entry.timer);
     this.signal.removeEventListener("abort", entry.abort);
-    entry.controller.abort();
-    // All owners await the last release, including decode, cache acknowledgement and reservations.
+    entry.controller.abort(this.signal.reason);
+    // Pending decodes retain their reservation until completion and cache acknowledgement.
+    void entry.closed.then(entry.resolveReleased, entry.rejectReleased);
     this.closing.add(entry.closed);
     void entry.promise
       .catch(() => {})
       .then(() => entry.handle?.dispose())
       .finally(() => {
         entry.releaseMemory();
+        this._cachedBytes -= entry.cacheBytes;
+        entry.cacheBytes = 0;
+        entry.handle = undefined;
         this.closing.delete(entry.closed);
         this.notify();
       })
@@ -299,9 +372,15 @@ export class SceneSources {
   async acquireWhenAvailable(source, signal) {
     for (;;) {
       signal.throwIfAborted();
+      this.signal.throwIfAborted();
+      if (this.disposed)
+        throw new DOMException("Scene source cache disposed", "AbortError");
       const lease =
         this.entries.has(source.key) ||
-        (!this.entries.size && !this.closing.size)
+        (!this.closing.size &&
+          ![...this.entries.values()].some(
+            (entry) => entry.users || entry.pending,
+          ))
           ? this.acquire(source)
           : undefined;
       if (lease) return lease;

@@ -15,6 +15,10 @@ export function createSceneStreamHandlers(decodeSplats, decodeLcc) {
   const cache = createSogStreamHandlers(decodeSplats);
   const loads = new Map();
   const admissions = new Map();
+  const resourceChecks = new Map();
+  function acceptSceneResource({ id }) {
+    resourceChecks.get(id)?.();
+  }
   function admitSceneSource({ id, limits }) {
     admissions.get(id)?.(limits);
   }
@@ -31,6 +35,7 @@ export function createSceneStreamHandlers(decodeSplats, decodeLcc) {
       if (state) Object.assign(transport.remote(url), state, { resolved });
       transports.set(url, transport);
     }
+    transport.remote(url).resolved = resolved;
     return transport;
   };
   async function loadSceneSource(
@@ -55,6 +60,19 @@ export function createSceneStreamHandlers(decodeSplats, decodeLcc) {
           limits = await abortable(approved, signal);
         } finally {
           admissions.delete(id);
+        }
+      };
+      const checkResource = async (resource) => {
+        if (!args.validateResources) return;
+        const approved = new Promise((resolve) =>
+          resourceChecks.set(id, resolve),
+        );
+        try {
+          rpc.sendStatus({ resource });
+          // The session owner must reconcile independently fetched versions before decode.
+          await abortable(approved, signal);
+        } finally {
+          resourceChecks.delete(id);
         }
       };
       let data;
@@ -83,8 +101,12 @@ export function createSceneStreamHandlers(decodeSplats, decodeLcc) {
           signal,
           source.wholeFile ?? false,
         );
-        const sh = source.shByteLength
-          ? await rangeSource(
+        await checkResource({
+          url: source.url,
+          state: transport.resourceState(transport.remote(source.url)),
+        });
+        const shTransport = source.shByteLength
+          ? rangeSource(
               source.shUrl,
               args.shUrl,
               {
@@ -92,8 +114,21 @@ export function createSceneStreamHandlers(decodeSplats, decodeLcc) {
                 withCredentials: args.shWithCredentials,
               },
               source.shResourceState,
-            ).read(source.shUrl, source.shOffset, source.shByteLength, signal)
+            )
+          : undefined;
+        const sh = shTransport
+          ? await shTransport.read(
+              source.shUrl,
+              source.shOffset,
+              source.shByteLength,
+              signal,
+            )
           : new Uint8Array(0);
+        if (shTransport)
+          await checkResource({
+            url: source.shUrl,
+            state: shTransport.resourceState(shTransport.remote(source.shUrl)),
+          });
         signal.throwIfAborted();
         // Configure the primitive limit before wasm-bindgen copies the context string.
         wasmCall(() =>
@@ -151,6 +186,12 @@ export function createSceneStreamHandlers(decodeSplats, decodeLcc) {
         );
         const fileBytes = joinBytes(chunks, size);
         rpc.sendStatus({ loaded: size });
+        await checkResource({
+          url: source.url,
+          headers: [...response.headers],
+          size,
+          responseUrl: response.url,
+        });
         let decodedCount;
         try {
           decodedCount = await preflightScenePayload(
@@ -226,5 +267,6 @@ export function createSceneStreamHandlers(decodeSplats, decodeLcc) {
     releaseSceneSource,
     extractSceneRanges,
     admitSceneSource,
+    acceptSceneResource,
   };
 }

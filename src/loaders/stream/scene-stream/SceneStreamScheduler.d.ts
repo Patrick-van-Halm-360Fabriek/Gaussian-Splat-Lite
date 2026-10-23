@@ -19,7 +19,7 @@ export interface SceneStreamOptions {
    * Headers requiring larger whole-file decodes are re-admitted before allocation.
    * JS object overhead and renderer-owned buffers are not included. */
   maxResidentCpuBytes?: number;
-  /** Batch textures and index/opacity storage, including atomic replacement overlap. Default: 1 GiB. */
+  /** Batch textures and index/opacity storage, including reserved coarse coverage and atomic replacement overlap. Default: 1 GiB. */
   maxResidentGpuBytes?: number;
   onChange?: () => void;
   onError?: (error: unknown, url: string) => void;
@@ -33,7 +33,11 @@ export interface SceneStreamStats {
   residentMeshes: number;
   residentChunks: number;
   residentBytes: number;
+  /** Outstanding source reservations and unpublished backing pages, including CPU and GPU. */
   pendingBytes: number;
+  /** Ready source-cache buffers; excludes render pages and decoder temporaries. */
+  cachedBytes: number;
+  failedNodes: number;
   loadingChunks: number;
   loadProgress: number;
   pendingLoads: number;

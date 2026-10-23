@@ -23,6 +23,13 @@ export function byteBudget(value, name) {
 /** Upper envelopes for owned binary buffers, not JS object/renderer overhead. */
 export function regionMemory(count, shDegree) {
   checkSourceCount(count);
+  return batchMemory(count, shDegree);
+}
+
+/** Rounded render capacity may exceed a single decoder's point-count limit. */
+export function batchMemory(count, shDegree) {
+  if (!Number.isSafeInteger(count) || count < 1 || count > 2 ** 32)
+    throw new Error("Invalid scene batch capacity");
   const arrays = [2, 3, 4, 6, 8][shDegree];
   if (!arrays) throw new Error("Invalid scene SH degree");
   const { capacity } = sogBatchTextureLayout(count);
@@ -31,8 +38,15 @@ export function regionMemory(count, shDegree) {
   const spatial = Math.ceil(count / 256) * 24;
   const gpu = capacity * arrays * 16 + indices + capacity * 4;
   // Packed arrays, source/visible IDs, index/opacity tables, bounds and an extraction copy.
+  // Each 64-record slot can own separate full/center bounds and spatial-bound copies.
+  const regionBounds = Math.ceil(capacity / 64) * 96;
   const cpu =
-    gpu + capacity * 8 + spatial * 2 + count * (arrays * 16 + 4) + 65536;
+    gpu +
+    capacity * 8 +
+    spatial * 2 +
+    count * (arrays * 16 + 4) +
+    regionBounds +
+    65536;
   return { cpu, gpu };
 }
 

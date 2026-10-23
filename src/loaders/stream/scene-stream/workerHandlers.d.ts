@@ -11,14 +11,19 @@ export declare function createSceneStreamHandlers(
       source: BudgetedSceneSource;
       limits?: SourceDecodeLimits;
       admissionEnabled?: boolean;
+      /** Wait for session-owned resource validation before decoding. */
+      validateResources?: boolean;
       url: string;
       shUrl?: string;
       requestHeader?: Record<string, string>;
       withCredentials?: boolean;
+      shRequestHeader?: Record<string, string>;
+      shWithCredentials?: boolean;
       hasFileResolver?: boolean;
     },
     rpc: { sendStatus(data: unknown): void },
   ): Promise<SceneSourceHandle["info"]>;
+  acceptSceneResource(args: { id: number }): void;
   releaseSceneSource(args: { id: number }): void;
   admitSceneSource(args: { id: number; limits: SourceDecodeLimits }): void;
   extractSceneRanges(args: {

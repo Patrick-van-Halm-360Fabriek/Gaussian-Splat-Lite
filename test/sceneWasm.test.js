@@ -4,8 +4,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { decodeShRgbToArray } from "../src/data/splatCodec.js";
 import { decodeSplat } from "../src/data/unpack.js";
+import { reorderSplats } from "../src/loaders/morton.js";
 import { sourceLimits } from "../src/loaders/stream/scene-stream/limits.js";
+import { createSogStreamHandlers } from "../src/loaders/stream/sog-stream/workerHandlers.js";
 import { createSharedPlyScene } from "./lcc2Fixture.js";
+import { createSceneCodecFixture } from "./sceneCodecFixture.js";
 
 const glue = new URL(
   "../rust/gaussian-splat-rs/pkg/gaussian_splat_rs.js",
@@ -36,11 +39,10 @@ function assertPacked(data, count, degree) {
     ["splat0", Uint32Array, 4],
     ["splat1", Uint32Array, 4],
     ["sortCenters", Float32Array, 3],
-    ...Array.from({ length: degree ? 4 : 0 }, (_, block) => [
-      `shBlock${block}`,
-      Uint32Array,
-      4,
-    ]),
+    ...Array.from(
+      { length: Math.ceil((degree * (degree + 2)) / 4) },
+      (_, block) => [`shBlock${block}`, Uint32Array, 4],
+    ),
   ]) {
     assert.ok(data[name] instanceof Type, `${name} type`);
     assert.equal(data[name].length, data.maxSplats * stride, `${name} length`);
@@ -101,6 +103,164 @@ test(
     assert.ok(module.wasm_memory_bytes() <= limits.maxWasmBytes);
   },
 );
+
+for (const codec of ["spz", "sog"])
+  test(
+    `built WASM ${codec} retains two nonzero source ranges, transparent slots and all SH blocks through Morton extraction`,
+    { skip: !available, timeout: 30_000 },
+    async () => {
+      const module = await wasm();
+      const degree = codec === "spz" ? 4 : 3;
+      const coefficients = degree * (degree + 2);
+      const blocks = Math.ceil(coefficients / 4);
+      const limits = sourceLimits({ codec, count: 5, shDegree: degree });
+      const fixture = createSceneCodecFixture(codec);
+      const checkRecord = (records, index, source) => {
+        const splat = decodeSplat(records.splatArrays, index);
+        const expected = fixture.expected[source];
+        for (const [axis, value] of splat.center.toArray().entries())
+          assert.ok(
+            Math.abs(value - expected.center[axis]) < 0.00001,
+            `source ${source} center ${axis}`,
+          );
+        assert.ok(Math.abs(splat.opacity - expected.opacity) < 0.0003);
+        for (const [axis, value] of splat.scales.toArray().entries())
+          assert.ok(
+            Math.abs(value - expected.scales[axis]) < 0.001,
+            `source ${source} scale ${axis}`,
+          );
+        const quaternion = splat.quaternion.toArray();
+        const sign =
+          quaternion.reduce(
+            (dot, value, axis) => dot + value * expected.quaternion[axis],
+            0,
+          ) < 0
+            ? -1
+            : 1;
+        for (const [axis, value] of quaternion.entries())
+          assert.ok(
+            Math.abs(sign * value - expected.quaternion[axis]) < 0.004,
+            `source ${source} quaternion ${axis}`,
+          );
+        for (const [channel, code] of [
+          96 + source * 16,
+          128,
+          160 - source * 16,
+        ].entries()) {
+          const color =
+            codec === "spz"
+              ? (code / 255 - 0.5) * (0.2820948 / 0.15) + 0.5
+              : 0.5 + (0.2820948 * (code - 128)) / 128;
+          assert.ok(Math.abs(splat.color.toArray()[channel] - color) < 0.001);
+        }
+        for (let coefficient = 0; coefficient < coefficients; coefficient++)
+          assertSh(
+            records.extra,
+            index,
+            coefficient,
+            [0, 1, 2].map(
+              (channel) =>
+                (32 + source * 20 + coefficient * 3 + channel - 128) / 128,
+            ),
+            0.0021,
+          );
+        if (coefficients % 4)
+          assert.equal(records.extra.shBlock3[index * 4 + 3], 0);
+      };
+
+      // Use real decoding and the package instance used by Morton/cache helpers.
+      const sharedWasm = await import("gaussian-splat-rs");
+      sharedWasm.initSync({ module: await readFile(binary) });
+      let decodes = 0;
+      const cache = createSogStreamHandlers(async () => {
+        decodes++;
+        let raw;
+        if (codec === "spz") {
+          const { bytes } = fixture;
+          const decoder = module.decode_to_splats(
+            "spz",
+            "ranges.spz",
+            limits.maxPoints,
+            limits.maxDecoderBytes,
+            limits.maxWasmBytes,
+          );
+          try {
+            decoder.set_expected_input_size(bytes.length);
+            for (let offset = 0; offset < bytes.length; offset += 7)
+              decoder.push(bytes.subarray(offset, offset + 7));
+          } catch (error) {
+            decoder.free();
+            throw error;
+          }
+          raw = decoder.finish();
+        } else {
+          const { metadata, assets } = fixture;
+          const session = new module.SogDecodeSession(
+            metadata,
+            limits.maxPoints,
+            limits.maxDecoderBytes,
+            limits.maxWasmBytes,
+          );
+          try {
+            for (const group of JSON.parse(session.plan())) {
+              for (const name of group) {
+                const png = assets.get(name);
+                assert.ok(png, `missing fixture asset ${name}`);
+                session.decode_asset(
+                  [png.subarray(0, 11), png.subarray(11)],
+                  0,
+                  png.length,
+                  -1,
+                );
+              }
+              while (!session.decode_batch()) {}
+            }
+          } catch (error) {
+            session.free();
+            throw error;
+          }
+          raw = session.finish();
+        }
+        assertPacked(raw, 5, degree);
+        const data = {
+          numSplats: raw.numSplats,
+          splatArrays: [raw.splat0, raw.splat1],
+          sortCenters: raw.sortCenters,
+          extra: Object.fromEntries(
+            Array.from({ length: blocks }, (_, block) => [
+              `shBlock${block}`,
+              raw[`shBlock${block}`],
+            ]),
+          ),
+        };
+        for (let source = 0; source < 5; source++)
+          checkRecord(data, source, source);
+        assert.ok(module.wasm_memory_bytes() <= limits.maxWasmBytes);
+        // The cache must restore this complete source permutation before slicing.
+        reorderSplats(data);
+        return data;
+      });
+      try {
+        await cache.loadSogChunk({ id: codec });
+        for (const [start, sources] of [
+          [1, [2, 1]],
+          [3, [4, 3]],
+        ]) {
+          const [range] = cache.extractSogRegions({
+            id: codec,
+            ranges: [{ start, count: 2 }],
+          });
+          assert.equal(range.numSplats, 2);
+          assert.deepEqual(Array.from(range.sourceIds), sources);
+          for (const [index, source] of sources.entries())
+            checkRecord(range, index, source);
+        }
+        assert.equal(decodes, 1);
+      } finally {
+        cache.releaseSogChunk({ id: codec });
+      }
+    },
+  );
 
 test(
   "built WASM rejects excessive header/output admission before publication",

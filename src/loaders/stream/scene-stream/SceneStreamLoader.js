@@ -1,8 +1,10 @@
 import { DefaultLoadingManager } from "three";
 import { abortable, linkedAbortController } from "../../../runtime/abort.js";
+import { RadSource } from "../../rad/RadSource.js";
+import { joinBytes, readResponse, requestOptions } from "../../source.js";
 import { StreamWorkerPool } from "../StreamWorkerPool.js";
 import { MAX_INPUT_BYTES, sourceLimits } from "./memory.js";
-import { logicalUrl, readSceneBytes } from "./resources.js";
+import { logicalUrl } from "./resources.js";
 
 /** Worker leases retain cached sources; only extracted copies cross back to the scene. */
 export class SceneStreamLoader {
@@ -13,7 +15,72 @@ export class SceneStreamLoader {
     this.controller = new AbortController();
     this.workerLifetimes = new WeakMap();
     this.workerHeapLimits = new WeakMap();
+    // Metadata belongs to the scene session, not an evictable worker/cache.
+    this.resourceVersions = new RadSource({ url: logicalUrl(options.url) });
   }
+  acceptResource(url, state) {
+    this.resourceVersions.acceptChunkResponse(
+      { input: url, resourceUrl: url, offset: 0, length: 0, wholeFile: true },
+      state,
+    );
+  }
+  acceptResponse(url, headers, size, responseUrl) {
+    const exposed = new Headers(headers);
+    const etag = exposed.get("ETag");
+    const modified = exposed.get("Last-Modified");
+    const validatorHeader =
+      etag && !etag.startsWith("W/")
+        ? "ETag"
+        : modified
+          ? "Last-Modified"
+          : undefined;
+    const encoding = exposed.get("Content-Encoding");
+    const length = exposed.get("Content-Length");
+    this.acceptResource(url, {
+      responseUrl,
+      validatorHeader,
+      validator: validatorHeader ? exposed.get(validatorHeader) : undefined,
+      // CORS can hide Content-Encoding; never compare encoded length with decoded bytes.
+      total:
+        length !== null &&
+        (!encoding || encoding.toLowerCase() === "identity") &&
+        Number(length) === size
+          ? size
+          : undefined,
+    });
+  }
+  async readFile(url, signal, limit, onLoaded) {
+    const manager = this.options.manager ?? DefaultLoadingManager;
+    const resolved = logicalUrl(manager.resolveURL(url));
+    manager.itemStart(resolved);
+    let response;
+    try {
+      signal.throwIfAborted();
+      const sameOrigin =
+        new URL(url).origin === new URL(logicalUrl(this.options.url)).origin;
+      response = await fetch(resolved, {
+        ...requestOptions(sameOrigin ? this.options : {}, resolved, url),
+        signal,
+      });
+      const { chunks, size } = await readResponse(
+        response,
+        limit,
+        () => {},
+        signal,
+      );
+      onLoaded(size);
+      signal.throwIfAborted();
+      this.acceptResponse(url, [...response.headers], size, response.url);
+      return joinBytes(chunks, size);
+    } catch (error) {
+      await response?.body?.cancel().catch(() => {});
+      manager.itemError(resolved);
+      throw error;
+    } finally {
+      manager.itemEnd(resolved);
+    }
+  }
+
   async load(source, signal) {
     const request = linkedAbortController(this.controller.signal, signal);
     try {
@@ -103,6 +170,7 @@ export class SceneStreamLoader {
                 source,
                 limits,
                 admissionEnabled: Boolean(source.admit),
+                validateResources: true,
                 url,
                 shUrl,
                 hasFileResolver: source.codec === "sog",
@@ -140,9 +208,22 @@ export class SceneStreamLoader {
                       this.workerHeapLimits.set(worker, limits.maxWasmBytes);
                       await worker.call("admitSceneSource", { id, limits });
                     }
-                    if ("loaded" in status) {
-                      rootBytes ??= status.loaded;
-                      progress(status.loaded);
+                    if ("resource" in status) {
+                      const resource = status.resource;
+                      if (resource.state)
+                        this.acceptResource(resource.url, resource.state);
+                      else
+                        this.acceptResponse(
+                          resource.url,
+                          resource.headers,
+                          resource.size,
+                          resource.responseUrl,
+                        );
+                      await worker.call("acceptSceneResource", { id });
+                    }
+                    if ("loaded" in status && !("stage" in status)) {
+                      rootBytes = Math.max(rootBytes ?? 0, status.loaded);
+                      progress(rootBytes + externalBytes);
                     }
                     if ("assetRequest" in status)
                       await worker.call("resolveAsset", {
@@ -152,15 +233,17 @@ export class SceneStreamLoader {
                     if ("fileRequest" in status) {
                       const assetUrl = new URL(status.filename, source.url)
                         .href;
-                      const input = await readSceneBytes(
+                      const input = await this.readFile(
                         assetUrl,
-                        this.options,
                         signal,
                         (limits?.maxInputBytes ?? MAX_INPUT_BYTES) -
                           externalBytes -
                           (rootBytes ?? 0),
+                        (size) => {
+                          externalBytes += size;
+                          progress((rootBytes ?? 0) + externalBytes);
+                        },
                       );
-                      externalBytes += input.byteLength;
                       await worker.call("resolveFile", {
                         requestId: status.fileRequest,
                         input,
@@ -233,5 +316,6 @@ export class SceneStreamLoader {
       new DOMException("Scene loader disposed", "AbortError"),
     );
     this.pool?.dispose();
+    this.resourceVersions.dispose();
   }
 }

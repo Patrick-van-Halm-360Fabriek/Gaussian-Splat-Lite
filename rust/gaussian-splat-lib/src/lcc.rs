@@ -241,7 +241,7 @@ mod tests {
         decode_splat_ln_scale, decode_splat_quat, encode_splat_quat, encode_splat_scale,
     };
 
-    #[derive(Default)]
+    #[derive(Debug, Default)]
     struct Capture {
         initialized: bool,
         finished: bool,
@@ -504,60 +504,80 @@ mod tests {
         assert!(LccDecodeContext::from_json(r#"{"version":"5.0","encoding":"COMPRESS","fileType":"Guess","count":0,"scaleMin":[0,0,0],"scaleMax":[1,1,1]}"#).is_err());
     }
 
-    #[test]
-    #[ignore = "requires a private export supplied through LCC_SAMPLE"]
-    fn real_export_numerical_ranges() {
+    fn check_export_numerical_ranges(manifest: &std::path::Path) -> anyhow::Result<Vec<Capture>> {
         use std::{
             fs::File,
-            io::{Read, Seek, SeekFrom},
-            path::PathBuf,
+            io::{ErrorKind, Read, Seek, SeekFrom},
         };
-        let manifest = PathBuf::from(std::env::var_os("LCC_SAMPLE").expect("set LCC_SAMPLE"));
-        let meta: serde_json::Value =
-            serde_json::from_reader(File::open(&manifest).unwrap()).unwrap();
-        let directory = manifest.parent().unwrap();
+        let meta: serde_json::Value = serde_json::from_reader(File::open(manifest)?)?;
+        let directory = manifest
+            .parent()
+            .context("manifest needs a parent directory")?;
+        let companion = |lower: &str, capitalized: &str| {
+            File::open(directory.join(lower)).or_else(|error| {
+                if error.kind() == ErrorKind::NotFound {
+                    File::open(directory.join(capitalized))
+                } else {
+                    Err(error)
+                }
+            })
+        };
+        let quality = serde_json::from_value::<LccFileType>(meta["fileType"].clone())?
+            == LccFileType::Quality;
+        let mut samples = Vec::new();
         for environment in [false, true] {
+            let mut input = if environment {
+                match companion("environment.bin", "Environment.bin") {
+                    Ok(file) => file,
+                    Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            } else {
+                companion("data.bin", "Data.bin")?
+            };
             let scale_name = if environment { "envscale" } else { "scale" };
             let sh_name = if environment { "envshcoef" } else { "shcoef" };
-            let attributes = meta["attributes"].as_array().unwrap();
-            let scale = attributes.iter().find(|a| a["name"] == scale_name).unwrap();
-            let sh_range = attributes.iter().find(|a| a["name"] == sh_name).unwrap();
-            let mut input = File::open(directory.join(if environment {
-                "environment.bin"
-            } else {
-                "data.bin"
-            }))
-            .unwrap();
-            let mut sh_input = File::open(directory.join("shcoef.bin")).unwrap();
-            let stride = if environment { 96 } else { 32 };
-            let length = input.metadata().unwrap().len();
-            assert_eq!(length % stride, 0);
+            let attributes = meta["attributes"]
+                .as_array()
+                .context("missing attributes")?;
+            let scale = attributes
+                .iter()
+                .find(|a| a["name"] == scale_name)
+                .context("missing scale range")?;
+            let sh_range = attributes.iter().find(|a| a["name"] == sh_name);
+            let stride = if environment && quality { 96 } else { 32 };
+            let length = input.metadata()?.len();
+            ensure!(length % stride == 0, "base length/stride mismatch");
             let records = length / stride;
             let count = records.min(10_000) as usize;
             let ctx = LccDecodeContext::from_json(&serde_json::json!({
                 "version": meta["version"], "encoding": meta["encoding"], "fileType": meta["fileType"],
-                "count": count, "maxPoints": count, "environment": environment,
+                "count": count, "maxPoints": count.max(1), "environment": environment,
                 "scaleMin": scale["min"], "scaleMax": scale["max"],
-                "shMin": sh_range["min"], "shMax": sh_range["max"],
-            }).to_string()).unwrap();
-            let mut base = vec![0; count * stride as usize];
-            let mut sh = if environment {
-                Vec::new()
+                "shMin": sh_range.map(|a| &a["min"]), "shMax": sh_range.map(|a| &a["max"]),
+            }).to_string())?;
+            let mut sh_input = if quality && !environment {
+                let file = companion("shcoef.bin", "Shcoef.bin")?;
+                ensure!(
+                    file.metadata()?.len() == records * 64,
+                    "SH length/count mismatch"
+                );
+                Some(file)
             } else {
-                vec![0; count * 64]
+                None
             };
+            let mut base = vec![0; count * stride as usize];
+            let mut sh = vec![0; if sh_input.is_some() { count * 64 } else { 0 }];
             for i in 0..count {
                 let index = i as u64 * records / count as u64;
-                input.seek(SeekFrom::Start(index * stride)).unwrap();
-                input
-                    .read_exact(&mut base[i * stride as usize..(i + 1) * stride as usize])
-                    .unwrap();
-                if !environment {
-                    sh_input.seek(SeekFrom::Start(index * 64)).unwrap();
-                    sh_input.read_exact(&mut sh[i * 64..(i + 1) * 64]).unwrap();
+                input.seek(SeekFrom::Start(index * stride))?;
+                input.read_exact(&mut base[i * stride as usize..(i + 1) * stride as usize])?;
+                if let Some(input) = &mut sh_input {
+                    input.seek(SeekFrom::Start(index * 64))?;
+                    input.read_exact(&mut sh[i * 64..(i + 1) * 64])?;
                 }
             }
-            let decoded = decode_lcc(&base, &sh, &ctx, Capture::default()).unwrap();
+            let decoded = decode_lcc(&base, &sh, &ctx, Capture::default())?;
             for i in 0..count {
                 assert_eq!(
                     decoded.centers[i * 3],
@@ -600,8 +620,169 @@ mod tests {
                 .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), v| {
                     (lo.min(*v), hi.max(*v))
                 });
-            eprintln!("LCC real export: environment={environment}, samples={count}, physical scales={ranges:?}, SH={sh_range:?}; positions finite, quaternions normalized");
+            eprintln!(
+                "LCC sample: environment={environment}, samples={count}, physical scales={ranges:?}, SH={sh_range:?}; positions finite, quaternions normalized"
+            );
+            samples.push(decoded);
         }
+        Ok(samples)
+    }
+
+    #[test]
+    #[ignore = "requires a private export supplied through LCC_SAMPLE"]
+    fn real_export_numerical_ranges() {
+        let manifest = std::env::var_os("LCC_SAMPLE").expect("set LCC_SAMPLE");
+        check_export_numerical_ranges(std::path::Path::new(&manifest)).unwrap();
+    }
+
+    #[test]
+    fn export_harness_accepts_profiles_optional_environment_and_companion_casing() {
+        use std::{fs, io::ErrorKind, time::SystemTime};
+        let directory = std::env::temp_dir().join(format!(
+            "lcc-harness-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).unwrap();
+        let result = (|| -> anyhow::Result<()> {
+            // Synthetic records test the harness, not genuine-export compatibility.
+            for (quality, capitalized, environment) in [
+                (false, false, false),
+                (true, false, false),
+                (false, true, true),
+                (true, true, true),
+            ] {
+                let name = |lower, upper| if capitalized { upper } else { lower };
+                let mut attributes = vec![serde_json::json!({
+                    "name": "scale", "min": [0, 1, 2], "max": [1, 3, 5]
+                })];
+                if quality {
+                    attributes.push(serde_json::json!({
+                        "name": "shcoef", "min": [-1, -2, -3], "max": [2, 4, 6]
+                    }));
+                }
+                if environment {
+                    attributes.push(serde_json::json!({
+                        "name": "envscale", "min": [10, 20, 30], "max": [12, 24, 36]
+                    }));
+                    if quality {
+                        attributes.push(serde_json::json!({
+                            "name": "envshcoef", "min": [100, 200, 300], "max": [110, 220, 330]
+                        }));
+                    }
+                }
+                let manifest = directory.join("synthetic.lcc");
+                let mut meta = serde_json::json!({
+                    "version": "5.0", "encoding": "COMPRESS",
+                    "fileType": if quality { "Quality" } else { "Portable" },
+                    "attributes": attributes
+                });
+                fs::write(&manifest, meta.to_string())?;
+                let data = directory.join(name("data.bin", "Data.bin"));
+                fs::write(&data, [record(3, 0), record(3, 255)].concat())?;
+                let sh = directory.join(name("shcoef.bin", "Shcoef.bin"));
+                if quality {
+                    fs::write(&sh, [[0; 64], [255; 64]].concat())?;
+                }
+                let env = directory.join(name("environment.bin", "Environment.bin"));
+                if environment {
+                    let mut bytes = Vec::new();
+                    for alpha in [0, 255] {
+                        bytes.extend(record(3, alpha));
+                        if quality {
+                            bytes.extend([alpha; 64]);
+                        }
+                    }
+                    fs::write(&env, bytes)?;
+                }
+                let samples = check_export_numerical_ranges(&manifest)?;
+                assert_eq!(samples.len(), if environment { 2 } else { 1 });
+                for (index, decoded) in samples.iter().enumerate() {
+                    assert!(decoded.initialized && decoded.finished);
+                    assert_eq!(decoded.centers, [1.25, -2.5, 3.75].repeat(2));
+                    assert_eq!(decoded.colors, [0.0, 127.0 / 255.0, 1.0].repeat(2));
+                    assert_eq!(decoded.opacity, [0.0, 1.0]);
+                    let expected_scale = if index == 0 {
+                        [0.0, 1.0 + 2.0 * 32768.0 / 65535.0, 5.0]
+                    } else {
+                        [10.0, 20.0 + 4.0 * 32768.0 / 65535.0, 36.0]
+                    };
+                    for scale in decoded.scales.chunks_exact(3) {
+                        for d in 0..3 {
+                            close(scale[d], expected_scale[d], 2e-6);
+                        }
+                    }
+                    for (band, stride) in decoded.sh.iter().zip([9, 15, 21]) {
+                        assert_eq!(band.len(), if quality { 2 * stride } else { 0 });
+                        if quality {
+                            let (min, max) = if index == 0 {
+                                ([-1.0, -2.0, -3.0], [2.0, 4.0, 6.0])
+                            } else {
+                                ([100.0, 200.0, 300.0], [110.0, 220.0, 330.0])
+                            };
+                            assert_eq!(band[..stride], min.repeat(stride / 3));
+                            assert_eq!(band[stride..], max.repeat(stride / 3));
+                        }
+                    }
+                }
+                if environment {
+                    let bytes = fs::read(&env)?;
+                    fs::write(&env, [0; 31])?;
+                    assert!(check_export_numerical_ranges(&manifest)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("base length/stride mismatch"));
+                    fs::write(&env, bytes)?;
+                }
+                if quality {
+                    fs::remove_file(&sh)?;
+                    assert_eq!(
+                        check_export_numerical_ranges(&manifest)
+                            .unwrap_err()
+                            .downcast_ref::<std::io::Error>()
+                            .unwrap()
+                            .kind(),
+                        ErrorKind::NotFound
+                    );
+                    fs::write(&sh, [0; 127])?;
+                    assert!(check_export_numerical_ranges(&manifest)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("SH length"));
+                    fs::write(&sh, [0; 128])?;
+                    meta["attributes"]
+                        .as_array_mut()
+                        .unwrap()
+                        .retain(|a| a["name"] != if environment { "envshcoef" } else { "shcoef" });
+                    fs::write(&manifest, meta.to_string())?;
+                    assert!(check_export_numerical_ranges(&manifest)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("missing Quality shMin"));
+                    fs::remove_file(sh)?;
+                }
+                let unsupported = directory.join("other-data.bin");
+                fs::rename(&data, &unsupported)?;
+                assert_eq!(
+                    check_export_numerical_ranges(&manifest)
+                        .unwrap_err()
+                        .downcast_ref::<std::io::Error>()
+                        .unwrap()
+                        .kind(),
+                    ErrorKind::NotFound
+                );
+                fs::remove_file(unsupported)?;
+                if environment {
+                    fs::remove_file(env)?;
+                }
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(directory).unwrap();
+        result.unwrap();
     }
 
     #[test]

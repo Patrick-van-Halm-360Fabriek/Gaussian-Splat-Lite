@@ -5,6 +5,7 @@ import test from "node:test";
 import init from "gaussian-splat-rs";
 import { SceneStreamLoader } from "../src/loaders/stream/scene-stream/SceneStreamLoader.js";
 import { createSceneStreamHandlers } from "../src/loaders/stream/scene-stream/workerHandlers.js";
+import { abortable } from "../src/runtime/abort.js";
 
 test("LCC companions scope credentials to the original scene origin", async (context) => {
   await init({
@@ -286,3 +287,199 @@ for (const failure of ["missing", "cancel", "resolver"]) {
     }
   });
 }
+
+function transportWorker(decode) {
+  class Transport {
+    files = new Map();
+    nextFile = 0;
+    handlers = createSceneStreamHandlers(
+      async (args, rpc) => {
+        const readFile = async (filename) => {
+          const requestId = ++this.nextFile;
+          try {
+            return await abortable(
+              new Promise((resolve) => {
+                this.files.set(requestId, resolve);
+                rpc.sendStatus({ fileRequest: requestId, filename });
+              }),
+              args.signal,
+            );
+          } finally {
+            this.files.delete(requestId);
+          }
+        };
+        await decode(args, rpc, readFile);
+        return {
+          numSplats: 1,
+          splatArrays: [new Uint32Array(4), new Uint32Array(4)],
+          sortCenters: new Float32Array(3),
+          extra: {},
+        };
+      },
+      () => {},
+    );
+    emit(data) {
+      queueMicrotask(() =>
+        this.onmessage({ data: { wasmMemoryBytes: 0, ...data } }),
+      );
+    }
+    postMessage({ id, name, args }) {
+      if (name === "init-wasm") return;
+      Promise.resolve()
+        .then(() => {
+          if (name === "resolveFile")
+            return this.files.get(args.requestId)?.(args.input);
+          return this.handlers[name](args, {
+            sendStatus: (status) => this.emit({ id, status }),
+          });
+        })
+        .then(
+          (result) => this.emit({ id, result }),
+          (error) => this.emit({ id, error }),
+        );
+    }
+    terminate() {}
+  }
+  return class extends WorkerRpc {
+    constructor(onDispose) {
+      super(new Transport(), onDispose);
+    }
+  };
+}
+
+for (const overflow of [false, true]) {
+  test(`SOG RPC counts root and sidecars once and ${overflow ? "rejects over" : "accepts exact"} input limit`, async (context) => {
+    const root = new TextEncoder().encode('{"version":2,"count":1}');
+    const sidecars = new Map([
+      ["https://scene.invalid/a.webp", new Uint8Array(3)],
+      ["https://other.invalid/b.webp", new Uint8Array(5)],
+      ["https://scene.invalid/c.webp", new Uint8Array(7)],
+    ]);
+    const total = root.length + 3 + 5 + 7;
+    const requests = [];
+    const events = [];
+    context.mock.method(globalThis, "fetch", async (url, options) => {
+      requests.push(url);
+      assert.equal(
+        options.headers.get("Authorization"),
+        url.startsWith("https://scene.invalid/") ? "Bearer secret" : null,
+      );
+      assert.equal(
+        options.credentials,
+        url.startsWith("https://scene.invalid/") ? "include" : "same-origin",
+      );
+      return new Response(url.endsWith("meta.json") ? root : sidecars.get(url));
+    });
+    let completed = false;
+    const loader = new SceneStreamLoader(
+      {
+        url: "https://scene.invalid/scene.lcc2",
+        requestHeader: { Authorization: "Bearer secret" },
+        withCredentials: true,
+        manager: {
+          resolveURL: (url) =>
+            url.replace(
+              "https://scene.invalid/b.webp",
+              "https://other.invalid/b.webp",
+            ),
+          itemStart: (url) => events.push(["start", url]),
+          itemEnd: (url) => events.push(["end", url]),
+          itemError: (url) => events.push(["error", url]),
+        },
+      },
+      () => {},
+    );
+    loader.workerModule = Promise.resolve({
+      SceneStreamWorker: transportWorker(async (args, rpc, readFile) => {
+        for (const filename of ["a.webp", "b.webp", "c.webp"]) {
+          rpc.sendStatus({ loaded: root.length });
+          await readFile(filename);
+          rpc.sendStatus({ loaded: root.length });
+          rpc.sendStatus({ stage: "decode", loaded: 1, total: 1 });
+        }
+        completed = true;
+      }),
+    });
+    let handle;
+    try {
+      const pending = loader.load(
+        {
+          codec: "sog",
+          url: "https://scene.invalid/meta.json",
+          count: 1,
+          shDegree: 0,
+          maxInputBytes: total - Number(overflow),
+        },
+        new AbortController().signal,
+      );
+      if (overflow) await assert.rejects(pending, /byte limit/);
+      else handle = await pending;
+      assert.equal(completed, !overflow);
+      assert.deepEqual(requests, [
+        "https://scene.invalid/meta.json",
+        ...sidecars.keys(),
+      ]);
+      if (!overflow) assert.equal(loader.stats.downloadedBytes, total);
+      for (const url of requests) {
+        assert.equal(
+          events.filter(([event, value]) => event === "start" && value === url)
+            .length,
+          1,
+        );
+        assert.equal(
+          events.filter(([event, value]) => event === "end" && value === url)
+            .length,
+          1,
+        );
+      }
+      assert.equal(
+        events.filter(([event]) => event === "error").length,
+        overflow ? 2 : 0,
+      );
+    } finally {
+      await handle?.dispose();
+      loader.dispose();
+    }
+  });
+}
+
+test("SOG sidecar validator survives source and worker eviction before file delivery", async (context) => {
+  const root = new TextEncoder().encode('{"version":2,"count":1}');
+  let sidecars = 0;
+  let completed = 0;
+  context.mock.method(globalThis, "fetch", async (url) => {
+    if (url.endsWith("meta.json")) return new Response(root);
+    return new Response(new Uint8Array(3), {
+      headers: { ETag: `"v${++sidecars}"` },
+    });
+  });
+  const loader = new SceneStreamLoader(
+    { url: "https://scene.invalid/scene.lcc2" },
+    () => {},
+  );
+  loader.workerModule = Promise.resolve({
+    SceneStreamWorker: transportWorker(async (_args, _rpc, readFile) => {
+      await readFile("shared.webp");
+      completed++;
+    }),
+  });
+  const source = {
+    codec: "sog",
+    url: "https://scene.invalid/meta.json",
+    count: 1,
+    shDegree: 0,
+  };
+  try {
+    const first = await loader.load(source, new AbortController().signal);
+    await first.dispose();
+    assert.equal(loader.stats.downloadedBytes, root.byteLength + 3);
+    await assert.rejects(
+      loader.load(source, new AbortController().signal),
+      /resource version changed/,
+    );
+    assert.equal(loader.stats.downloadedBytes, 2 * (root.byteLength + 3));
+    assert.equal(completed, 1);
+  } finally {
+    loader.dispose();
+  }
+});

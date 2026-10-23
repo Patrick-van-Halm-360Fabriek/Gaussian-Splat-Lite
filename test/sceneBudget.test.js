@@ -95,6 +95,7 @@ test("loader cancellation releases late cache data but pins shared WASM growth",
   assert.equal(loader.stats.wasmMemoryBytes, 80 * 1024 * 1024);
   assert.equal(memory.cpu, 44 + 128 * 1024 * 1024);
   first.release();
+  await sources.dispose();
   await tick();
   assert.equal(memory.cpu, 0);
   assert.equal(loader.stats.wasmMemoryBytes, 0);
@@ -142,6 +143,7 @@ test("failed larger decode pins shared WASM capacity until the retained worker i
       128 * 1024 * 1024,
   );
   first.release();
+  await sources.dispose();
   await tick();
   assert.equal(memory.cpu, 0);
 });
@@ -255,6 +257,7 @@ test("whole-file header growth is reserved before decoder output and publication
   assert.equal(calls, 1);
   assert.equal(memory.cpu, admissionBytes);
   lease.release();
+  await sources.dispose();
   await tick();
   assert.equal(memory.cpu, 0);
 });
@@ -297,6 +300,7 @@ test("denied header re-admission never calls the decoder or publishes a cache", 
     /no longer cached/,
   );
   lease.release();
+  await sources.dispose();
   await tick();
   assert.equal(memory.cpu, 0);
 });
@@ -371,6 +375,7 @@ test("canceled decode and asynchronous cache release retain their reservations",
   await tick();
   assert.equal(memory.cpu, sourceMemory(source));
   other.release();
+  await sources.dispose();
   await tick();
   assert.equal(memory.cpu, 0);
 });
