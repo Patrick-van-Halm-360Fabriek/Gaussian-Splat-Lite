@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.1] - 2026-10-24
+
 ### Added
 
 - Added experimental `NeuralDenoiseXR` for per-eye neural denoising in WebXR with `WebGLRenderer` and `WebGPURenderer`, including its WebGL2 fallback. See [Neural denoising](docs/NeuralDenoiseNode.md#webxr).
@@ -651,7 +653,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Initial public release of the Three.js Gaussian Splatting renderer.
 
-[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.2...v1.4.0
 [1.3.2]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.1...v1.3.2
 [1.3.1]: https://github.com/WilliamLiu-1997/Gaussian-Splat-Lite/compare/v1.3.0...v1.3.1
