@@ -4,15 +4,7 @@
 
 The experimental neural denoiser smooths [stochastic rendering](StochasticRendering.md). Use `NeuralDenoiseNode` with `WebGPURenderer`, including its WebGL2 fallback, or `NeuralDenoisePass` with `WebGLRenderer`. For immersive rendering, use [NeuralDenoiseXR](#webxr) with either renderer. The trained models are included; no extra downloads are needed.
 
-## Choose between TAA and neural denoising
-
-| | `TAANode` / `TAAPass` | `NeuralDenoiseNode` / `NeuralDenoisePass` |
-| --- | --- | --- |
-| Moving objects | May leave a faint trail | Helps reduce trails; moving detail can still look soft or grainy |
-| Camera movement | Some grain returns | Smooths noise during movement; fast turns can look softer |
-| Cost | Lower | Depends on mode; Quality uses more GPU time and memory |
-
-With neural denoising, newly exposed backgrounds need time to settle. Results vary by scene and motion.
+Neural denoising smooths noise during movement and helps reduce trails behind moving objects. Moving detail can still look soft or grainy, and newly exposed backgrounds need time to settle. Results vary by scene and motion.
 
 ## Choose a mode
 
@@ -88,7 +80,7 @@ const pipeline = new RenderPipeline(renderer, color.add(bloom(color, 0.6, 0.4, 0
 
 ## WebGLRenderer: NeuralDenoisePass
 
-Use the pass in place of `RenderPass` or `TAAPass`:
+Use the pass in place of `RenderPass`:
 
 ```js
 import { NeuralDenoisePass } from "gaussian-splat-lite";

@@ -17,9 +17,9 @@ import { applyThreeR186Patch } from "../patches/threeR186.js";
 import { usesNativeWebGPU } from "../rendering/rendererUtils.js";
 import { WebGLDenoisePasses } from "./neuralDenoiseGL.js";
 import { WebGPUDenoisePasses } from "./neuralDenoisePasses.js";
+import { createNeuralDenoiseState } from "./neuralDenoiseState.js";
 import { neuralDenoiseModels } from "./neuralDenoiseWeights.js";
 import { StochasticCoverage } from "./stochasticCoverage.js";
-import { createTAAState } from "./taaShared.js";
 // The renderer's noise has 32 phases, so a still view's frames repeat after 32
 // and their mean stops getting cleaner there. The noise lies over the pixels
 // of the target, so the node draws the scene into a target with a margin, at
@@ -40,8 +40,7 @@ const VIEW_OFFSETS = [
 ];
 /**
  * Experimental temporal neural denoiser for stochastic Splat rendering on WebGPURenderer,
- * including its WebGL2 fallback,
- * used in place of TAANode. After Hu et al., "Ultra-fast Neural Inference for
+ * including its WebGL2 fallback. After Hu et al., "Ultra-fast Neural Inference for
  * Stochastic Gaussian Splatting Denoising" (arXiv 2609.25604), adapted to
  * scenes whose objects move.
  */
@@ -88,12 +87,7 @@ export class NeuralDenoiseNode extends Node {
     });
     return color;
   })();
-  state = createTAAState(
-    (value) => ({ value }),
-    [this.source, ...this.history],
-    true,
-    MARGIN,
-  );
+  state = createNeuralDenoiseState([this.source, ...this.history], MARGIN);
   passes = null;
   // The scene target's depth has the margin; this one has the image's size.
   depth = new DepthTexture(1, 1, FloatType);
@@ -136,7 +130,7 @@ export class NeuralDenoiseNode extends Node {
   }
   /** The projection `depthTexture` was rendered with. */
   get projectionMatrix() {
-    return this.state.uniforms.projection.value;
+    return this.state.projection;
   }
   /** The denoised image, for chaining effects. */
   getTextureNode() {
@@ -207,7 +201,7 @@ export class NeuralDenoiseNode extends Node {
       renderer.toneMapping = NoToneMapping;
       const reversedDepth = camera.reversedDepth;
       const coordinateSystem = camera.coordinateSystem;
-      const { x: width, y: height } = state.uniforms.renderSize.value;
+      const { x: width, y: height } = state.size;
       const [offsetX, offsetY] =
         VIEW_OFFSETS[Math.floor(this.frame / 32) % VIEW_OFFSETS.length];
       this.frame++;
@@ -226,12 +220,12 @@ export class NeuralDenoiseNode extends Node {
         )
           camera.updateProjectionMatrix();
       }
-      const valid = state.uniforms.valid.value;
+      const valid = state.valid;
       if (!valid && native)
         for (const target of this.history) renderer.initRenderTarget(target);
       // Camera relation to the previous frame, composed in double precision.
       const u = passes.uniforms;
-      const jittered = state.uniforms.projection.value.elements;
+      const jittered = state.projection.elements;
       const logarithmic =
         (nodeRenderer
           ? renderer.logarithmicDepthBuffer
@@ -356,7 +350,7 @@ export class NeuralDenoiseNode extends Node {
         : passes.result;
       this.previousWorld.copy(camera.matrixWorld);
       this.previousProjection.copy(camera.projectionMatrix);
-      state.advance(camera);
+      state.advance();
       this.capturePending = false;
     } finally {
       renderer.setRenderTarget(

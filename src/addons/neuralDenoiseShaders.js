@@ -1110,7 +1110,7 @@ ${
       : `let short: f32 = max(exp(-wh / ${float(weights.reach)}) * fast, 1.0 - same);`
   }
   let wide: vec4f = ${weights.compact ? "mix(coarse(wideTexture, position.xy, 2.0), coarse(rejectedTexture, position.xy, 4.0), 0.5)" : "coarse(wideTexture, position.xy, 2.0)"};
-  // A frame drawn with the TAA jitter shows at pixel p what lies at
+  // A frame drawn with projection jitter shows at pixel p what lies at
   // p + jitter. Where history is short the denoised path carries the frame,
   // and moving content would shift back and forth by up to half a pixel: the
   // path reads the frame and its filtered image at p - jitter instead.

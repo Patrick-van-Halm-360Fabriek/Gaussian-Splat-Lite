@@ -15,6 +15,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 - Neural denoising shows less flicker and noise on moving objects, including moving Splats, and while the camera moves.
 
+### Removed
+
+- Removed `TAANode`, `TAAPass`, and the viewer's TAA option. Use `NeuralDenoiseNode` with `WebGPURenderer`, `NeuralDenoisePass` with `WebGLRenderer`, or `NeuralDenoiseXR` for WebXR. See [Neural denoising](docs/NeuralDenoiseNode.md).
+
 ### Fixed
 
 - On `WebGPURenderer`'s WebGL2 backend, the neural denoiser's `depthTexture` stopped updating after a resize.
@@ -131,7 +135,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 ### Changed
 
 - The default `minAlpha` is now `1 / 255` instead of `0.5 / 255`. Set `minAlpha: 0.5 / 255` to keep the previous look.
-- `TAAPass` is now used through `EffectComposer` with a final Three.js `OutputPass`; calling `taa.render(renderer)` on its own is no longer supported. Bloom and other effects go between the two passes without extra settings. Splat colors still match direct canvas rendering. `OutputPass` applies the renderer's tone mapping to the whole image, Splats included. See [TAAPass and TAANode](docs/TAAPass.md).
+- `TAAPass` is now used through `EffectComposer` with a final Three.js `OutputPass`; calling `taa.render(renderer)` on its own is no longer supported. Bloom and other effects go between the two passes without extra settings. Splat colors still match direct canvas rendering. `OutputPass` applies the renderer's tone mapping to the whole image, Splats included.
 
 ### Removed
 

@@ -19,9 +19,9 @@ import {
 import { createReferenceHelpers } from "./referenceHelpers.js";
 import { renderOptionGroups } from "./renderOptions.js";
 import { createRenderOptionsPanel } from "./renderOptionsPanel.js";
+import { createViewerDenoise } from "./viewerDenoise.js";
 import { createViewerHalfFloat } from "./viewerHalfFloat.js";
 import { ViewerInspector } from "./viewerInspector.js";
-import { createViewerTAA } from "./viewerTAA.js";
 import { createViewerUI } from "./viewerUI.js";
 
 const viewport = document.querySelector("#viewport");
@@ -129,9 +129,8 @@ async function createRendererState(backend, previous, onFailure = () => {}) {
         }
       }
     }
-    if (state.splatRenderer.stochastic) {
-      state.taa = createViewerTAA(state.renderer, scene, camera, {
-        neural: denoiser === "neural",
+    if (denoiseEnabled && state.splatRenderer.stochastic) {
+      state.denoiser = createViewerDenoise(state.renderer, scene, camera, {
         mode: denoiserMode,
         msaa,
       });
@@ -164,7 +163,7 @@ function disposeRendererState(state) {
   state.frameGate?.dispose();
   state.controls?.removeEventListener("update", requestRender);
   state.controls?.dispose();
-  state.taa?.dispose();
+  state.denoiser?.dispose();
   state.halfFloat?.dispose();
   state.splatRenderer?.removeFromParent();
   state.splatRenderer?.dispose();
@@ -203,12 +202,12 @@ function mountRendererState(state, attachInspector = true) {
 }
 
 let needsRender = true;
-let taa = null;
+let denoiser = null;
 // resizeRenderer() reads it while mounting the first renderer.
 let activeStream = null;
 let renderOnDemand = true;
 let halfFloatBlending = true;
-let denoiser = "neural";
+let denoiseEnabled = true;
 let denoiserMode = "performance";
 let msaa = false;
 let rendererState = await createRendererState("webgpu");
@@ -236,7 +235,7 @@ function updateStats(time, rendered) {
 
 function requestRender() {
   needsRender = true;
-  taa?.invalidate();
+  denoiser?.invalidate();
 }
 
 function renderFrame(time) {
@@ -250,7 +249,7 @@ function drawFrame(time) {
   // Replay a blocked draw without waiting for another animation tick.
   if (
     !frameGate.isReady(rendererState.drawPendingFrame) ||
-    (renderOnDemand && !needsRender && !taa?.needsRender)
+    (renderOnDemand && !needsRender && !denoiser?.needsRender)
   ) {
     updateStats(time, false);
     return;
@@ -259,14 +258,14 @@ function drawFrame(time) {
   // Synchronous preparation is consumed by this draw; worker completion can
   // still request a later frame through onDirty.
   needsRender = false;
-  if (taa) {
-    taa.render();
+  if (denoiser) {
+    denoiser.render();
     // WebGL backends draw stochastically until the sorted order is ready.
     if (!splatRenderer.stochastic && !splatRenderer.stochasticActive) {
-      retireTAA();
+      retireDenoiser();
     }
   } else if (halfFloatBlending) {
-    // Each renderer builds its buffer on its first sorted draw.
+    // Each renderer builds its buffer on its first draw without denoising.
     rendererState.halfFloat ??= createViewerHalfFloat(renderer, scene, camera);
     rendererState.halfFloat.render();
   } else {
@@ -296,7 +295,7 @@ const renderOptionActions = {
   },
   maxSh: (value) => {
     if (activeSplat) applyMaxSh(activeSplat, value);
-    taa?.reset();
+    denoiser?.reset();
   },
   halfFloatBlending: (value) => {
     halfFloatBlending = value;
@@ -321,12 +320,12 @@ const renderOptionActions = {
     if (activeStream instanceof SogStreamScheduler)
       activeStream.lodMultiplier = value;
   },
-  denoiser: (value) => {
-    denoiser = value;
+  denoiseEnabled: (value) => {
+    denoiseEnabled = value;
     replaceDenoiser();
   },
-  denoiserMode: (value) => {
-    denoiserMode = value;
+  denoiserQuality: (value) => {
+    denoiserMode = value ? "quality" : "performance";
     replaceDenoiser();
   },
   msaa: (value) => {
@@ -335,16 +334,17 @@ const renderOptionActions = {
   },
 };
 
-// Replaces the active filter; it starts again without history.
+// Apply denoising settings, starting any new filter without history.
 function replaceDenoiser() {
-  if (!taa) return;
-  taa.dispose();
-  taa = createViewerTAA(renderer, scene, camera, {
-    neural: denoiser === "neural",
-    mode: denoiserMode,
-    msaa,
-  });
-  rendererState.taa = taa;
+  if (!denoiser && !splatRenderer.stochastic) return;
+  denoiser?.dispose();
+  denoiser = denoiseEnabled
+    ? createViewerDenoise(renderer, scene, camera, {
+        mode: denoiserMode,
+        msaa,
+      })
+    : null;
+  rendererState.denoiser = denoiser;
 }
 
 let rendererSwitchToken = 0;
@@ -386,7 +386,7 @@ function detachRendererState(state) {
 function activateRendererState(state, attachInspector = true) {
   rendererState = state;
   ({ renderer, controls, splatRenderer, frameGate } = state);
-  taa = state.taa ?? null;
+  denoiser = state.denoiser ?? null;
   mountRendererState(state, attachInspector);
 }
 
@@ -494,25 +494,20 @@ function applyRenderOption(property, value) {
     apply(value);
   } else {
     splatRenderer[property] = value;
-    // Turning stochastic off keeps TAA until drawFrame sees it inactive.
-    if (property === "stochastic" && value && !taa) {
-      taa = createViewerTAA(renderer, scene, camera, {
-        neural: denoiser === "neural",
-        mode: denoiserMode,
-        msaa,
-      });
-      rendererState.taa = taa;
+    // Turning stochastic off keeps denoising until drawFrame sees it inactive.
+    if (property === "stochastic" && value && !denoiser) {
+      replaceDenoiser();
     }
     splatRenderer.setDirty();
   }
   requestRender();
 }
 
-function retireTAA() {
-  taa.dispose();
-  taa = null;
-  rendererState.taa = null;
-  // Redraw the sorted image without TAA history.
+function retireDenoiser() {
+  denoiser.dispose();
+  denoiser = null;
+  rendererState.denoiser = null;
+  // Redraw the sorted image without denoising history.
   requestRender();
 }
 
@@ -563,7 +558,7 @@ function isFileDrag(event) {
 }
 
 function clearActiveModel() {
-  taa?.reset();
+  denoiser?.reset();
   if (activeSplat) scene.remove(activeSplat);
   if (activeStream) activeStream.dispose();
   else activeSplat?.dispose();
@@ -583,7 +578,7 @@ function cancelLoading() {
 }
 
 function applyModelOrientation(splat, streamed) {
-  taa?.reset();
+  denoiser?.reset();
   // Transform the stream group so rendering and LOD culling share the same
   // rotation; the decoded splats and index bounds remain in source space.
   splat.rotation.set(getModelRotationX(modelUpAxis, streamed), 0, 0);
@@ -591,7 +586,7 @@ function applyModelOrientation(splat, streamed) {
 }
 
 function frameSplat(splat) {
-  taa?.reset();
+  denoiser?.reset();
   const streamed = activeStream?.group === splat;
   const bounds = streamed
     ? activeStream.getBoundingBox()
@@ -808,7 +803,7 @@ function resizeRenderer() {
   const width = viewport.clientWidth;
   const height = viewport.clientHeight;
   renderer.setSize(width, height, false);
-  taa?.setSize(width, height);
+  denoiser?.setSize(width, height);
   camera.aspect = width / Math.max(height, 1);
   camera.updateProjectionMatrix();
   syncStreamResolution();

@@ -25,10 +25,11 @@ export function createRenderOptionsPanel({ container, groups, onChange }) {
   function syncDependencies() {
     const nativeWebGPU = getValue("rendererBackend") === "webgpu";
     const stochastic = getValue("stochastic");
+    const denoise = stochastic && getValue("denoiseEnabled");
     setHidden("minSortIntervalMs", nativeWebGPU);
-    setHidden("denoiser", !stochastic);
-    setHidden("denoiserMode", !stochastic || getValue("denoiser") !== "neural");
-    setHidden("msaa", !stochastic);
+    setHidden("denoiseEnabled", !stochastic);
+    setHidden("denoiserQuality", !denoise);
+    setHidden("msaa", !denoise);
   }
 
   function createRow(option) {

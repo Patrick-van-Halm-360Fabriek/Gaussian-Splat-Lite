@@ -14,7 +14,7 @@ export class NeuralDenoisePass extends Pass {
     super();
     // Capture, camera reprojection and reset are the same as on node renderers.
     this.denoise = new NeuralDenoiseNode(scene, camera, mode, msaa);
-    // Like TAAPass, convert before blending/resolve. The network averages
+    // Convert before blending/resolve. The network averages
     // display-referred samples, so MSAA must use that space too.
     Object.assign(this.denoise.source, { isXRRenderTarget: true });
     this.denoise.source.texture.colorSpace = SRGBColorSpace;
@@ -38,7 +38,7 @@ void main() {
   vec4 color = texture2D(image, vUv);
   if (encoded) {
     // OutputPass applies its transfer directly to premultiplied RGB. Invert
-    // that transfer here, as TAAPass does, to round-trip transparent pixels.
+    // that transfer here to round-trip transparent pixels.
     float scale = outputSRGB ? 1.0 : max(color.a, 1e-6);
     color.rgb = sRGBTransferEOTF(vec4(max(color.rgb / scale, 0.0), 1.0)).rgb * scale;
   }
