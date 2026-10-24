@@ -7,10 +7,6 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Added
-
-- Added `LccStreamScheduler` and `Lcc2StreamScheduler` scene APIs and viewer URL/folder loading. LCC supports the 5.0 COMPRESS Portable/Quality record layouts, SH, environment splats, and coarse-first Unit selection. LCC2 0.0.3 supports verified parent/child replacement and shared-file PLY/SPZ/SOG ranges. Both enforce finite CPU/GPU admission, preserve old coverage during replacement failures, and offer distance-band hysteresis. See the README for supported profiles, limits, and release gates.
-
 ## [1.4.1] - 2026-10-24
 
 ### Added
